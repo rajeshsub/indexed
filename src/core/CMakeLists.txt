@@ -6,6 +6,12 @@ add_library(indexed_core STATIC
     storage/EntryMeta.h
     storage/IndexPool.h
     storage/IndexPool.cpp
+    storage/IndexStore.h
+    storage/IndexStore.cpp
+    storage/Crc32.h
+    storage/Crc32.cpp
+    storage/IndexSerializer.h
+    storage/IndexSerializer.cpp
 )
 
 target_include_directories(indexed_core

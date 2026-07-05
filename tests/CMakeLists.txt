@@ -4,6 +4,8 @@ add_executable(indexed_tests
     test_main.cpp
     test_Scaffold.cpp
     test_IndexPool.cpp
+    test_IndexStore.cpp
+    test_IndexSerializer.cpp
 )
 
 target_link_libraries(indexed_tests
