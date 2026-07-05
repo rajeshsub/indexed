@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # cppcheck is a system dependency the pocc/pre-commit-hooks cppcheck hook shells
+      # out to; clang-format itself is pinned in .pre-commit-config.yaml, not installed
+      # here, so there is exactly one place that version is declared (rule 4).
+      - name: Install system dependencies for pre-commit hooks
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+
+      - name: Install pre-commit
+        run: pip install pre-commit
+
+      - name: Run pre-commit hooks (matches local `pre-commit run --all-files`)
+        run: pre-commit run --all-files --show-diff-on-failure
+
+  build-debug:
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential qt6-base-dev libgl1-mesa-dev libblkid-dev libudev-dev
+
+      - name: Cache FetchContent dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/debug/_deps
+          key: fetchcontent-debug-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: fetchcontent-debug-
+
+      - name: Configure CMake
+        run: cmake --preset linux-gcc-debug
+
+      - name: Build
+        run: cmake --build --preset linux-gcc-debug --parallel
+
+      - name: Run Tests
+        working-directory: build/debug
+        run: ctest --output-on-failure
+
+  build-release:
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential qt6-base-dev libgl1-mesa-dev libblkid-dev libudev-dev lcov
+
+      - name: Cache FetchContent dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/release/_deps
+          key: fetchcontent-release-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: fetchcontent-release-
+
+      - name: Configure CMake (with coverage)
+        run: cmake --preset linux-gcc-release -DCMAKE_CXX_FLAGS="--coverage" -DCMAKE_EXE_LINKER_FLAGS="--coverage"
+
+      - name: Build
+        run: cmake --build --preset linux-gcc-release --parallel
+
+      - name: Run Tests
+        working-directory: build/release
+        run: ctest --output-on-failure
+
+      - name: Generate coverage report
+        run: |
+          lcov --capture --directory build/release --output-file coverage.info --ignore-errors mismatch,gcov
+          lcov --remove coverage.info '*/_deps/*' '/usr/*' --output-file coverage.info
+
+      - name: Upload Coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.info
+          fail_ci_if_error: false
+
+  build-asan:
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential qt6-base-dev libgl1-mesa-dev libblkid-dev libudev-dev
+
+      - name: Cache FetchContent dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/asan/_deps
+          key: fetchcontent-asan-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: fetchcontent-asan-
+
+      - name: Configure CMake (ASAN)
+        run: cmake --preset linux-asan
+
+      - name: Build
+        run: cmake --build --preset linux-asan --parallel
+
+      - name: Test (ASAN)
+        working-directory: build/asan
+        env:
+          ASAN_OPTIONS: "halt_on_error=1:abort_on_error=1"
+        # Exclude tests that touch real mounts/OS state, mirroring winindex's exclusion
+        # of DriveEnumerator/Indexer; re-enable per-test once M3 lands with proper mocks.
+        run: ctest --output-on-failure -E "MountEnumerator|Indexer"

@@ -1,0 +1,12 @@
+build/
+.venv/
+.cache/
+.claude/
+CMakeUserPresets.json
+*.user
+out/
+install/
+*.idx
+*.log
+docs/doxygen/
+compile_commands.json

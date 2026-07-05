@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=indexed
+Comment=Blazing-fast Linux file search
+Exec=indexed
+Icon=indexed
+Terminal=false
+Categories=Utility;System;FileTools;
+Keywords=search;find;file;index;

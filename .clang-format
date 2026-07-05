@@ -1,0 +1,19 @@
+BasedOnStyle: Google
+IndentWidth: 4
+ColumnLimit: 100
+AccessModifierOffset: -4
+ConstructorInitializerIndentWidth: 4
+ContinuationIndentWidth: 4
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^<[A-Za-z0-9_/]+\.h>'
+    Priority: 1
+  - Regex: '^<QtWidgets/|^<Qt[A-Za-z]+/|^<Q[A-Z]'
+    Priority: 2
+  - Regex: '^"'
+    Priority: 3
+DeriveLineEnding: false
+UseCRLF: false

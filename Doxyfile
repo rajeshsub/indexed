@@ -1,0 +1,24 @@
+PROJECT_NAME           = "indexed"
+PROJECT_NUMBER         = 0.1.0
+PROJECT_BRIEF          = "Blazing-fast Linux file search"
+
+INPUT                  = src/
+FILE_PATTERNS          = *.h *.hpp
+RECURSIVE              = YES
+OUTPUT_DIRECTORY       = docs/doxygen
+GENERATE_LATEX         = NO
+GENERATE_HTML          = YES
+
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
+
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = YES
+
+HTML_OUTPUT            = html
+HTML_COLORSTYLE        = AUTO_LIGHT
