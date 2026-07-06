@@ -28,6 +28,8 @@ repos:
         args:
           - '--language=c++'
           - '--std=c++20'
+          - '--library=qt'  # Qt macros (slots/signals/Q_OBJECT) in ui/QTest files
+          - '--inline-suppr'  # honor narrowly-scoped `// cppcheck-suppress` comments
           - '--enable=warning,style,performance'
           - '--error-exitcode=1'
           - '--quiet'

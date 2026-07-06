@@ -1,16 +1,71 @@
-#include <QApplication>
-#include <QMainWindow>
+#include <pwd.h>
+#include <unistd.h>
 
-#include "Version.h"
+#include <QApplication>
+#include <QDialog>
+
+#include "indexer/WalkScanner.h"
+#include "platform/MountEnumerator.h"
+#include "search/SearchEngine.h"
+#include "settings/Logger.h"
+#include "settings/PathUtils.h"
+#include "settings/Settings.h"
+#include "storage/IndexStore.h"
+#include "ui/FirstRunDialog.h"
+#include "ui/MainWindow.h"
+#include <cstdlib>
+#include <filesystem>
+
+namespace {
+
+std::string HomeDir() {
+    const char* home = std::getenv("HOME");
+    if (home != nullptr && home[0] != '\0') {
+        return home;
+    }
+    const passwd* pw = getpwuid(getuid());
+    return pw != nullptr ? pw->pw_dir : "/";
+}
+
+}  // namespace
 
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
 
-    QMainWindow window;
-    window.setWindowTitle(
-        QStringLiteral("indexed v%1").arg(QString::fromUtf8(indexed::GetVersionString())));
-    window.resize(900, 600);
+    const indexed::DataDirs dirs = indexed::ResolveDataDirs();
+    indexed::EnsureDirectory(std::filesystem::path(dirs.configPath).parent_path().string());
+    indexed::EnsureDirectory(std::filesystem::path(dirs.indexPath).parent_path().string());
+    indexed::EnsureDirectory(std::filesystem::path(dirs.logPath).parent_path().string());
+
+    const std::string home = HomeDir();
+    indexed::Settings settings(dirs.configPath, home);
+    settings.Load();
+    indexed::Logger logger(dirs.logPath);
+    logger.Log("indexed starting");
+
+    if (!settings.FirstRunComplete()) {
+        indexed::MountEnumerator mounts;
+        indexed::FirstRunDialog firstRun(mounts.Enumerate(), home,
+                                         indexed::Settings::DefaultExcludedPaths(home));
+        if (firstRun.exec() != QDialog::Accepted) {
+            return 0;  // user declined setup; nothing to index yet
+        }
+        const indexed::FirstRunResult result = firstRun.Result();
+        settings.SetSelectedRoots(result.selectedRoots);
+        settings.SetExcludedPaths(result.excludedPaths);
+        settings.SetReindexIntervalHours(result.reindexIntervalHours);
+        settings.SetFirstRunComplete(true);
+        settings.Save();
+        logger.Log("first-run setup complete");
+    }
+
+    indexed::IndexStore store;
+    indexed::SearchEngine engine;
+    indexed::WalkScanner scanner;
+
+    indexed::MainWindow window(settings, store, engine, scanner, dirs.indexPath, dirs.logPath);
     window.show();
+    window.StartIndexing(/*force=*/false);
 
     return app.exec();
 }

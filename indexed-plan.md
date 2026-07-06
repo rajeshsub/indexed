@@ -754,7 +754,7 @@ Jobs (mirror winindex's structure):
 Each milestone should compile, pass tests, and be committed. TDD where practical.
 
 > **Progress tracker** (kept current as milestones land — check here before resuming
-> work in a fresh session): **M0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ · M4 onward: not started.**
+> work in a fresh session): **M0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 onward: not started.**
 > See `CLAUDE.md` for the workflow conventions (TDD discipline, subagent parallelization,
 > verification requirements) that apply to every remaining milestone.
 
@@ -772,11 +772,11 @@ Each milestone should compile, pass tests, and be committed. TDD where practical
    symlink/mount handling), `Indexer` orchestration (build/load/save/stale/incremental) with
    mocks. `MountEnumerator`. `Settings`/`IniFile`/`PathUtils`/`Logger` (newline-delimited
    path lists).
-5. **M4 — Qt GUI. ⬅ NEXT.** `MainWindow` (search box + debounce + min-2-chars, virtual `ResultModel`,
+5. **M4 — Qt GUI. ✅ DONE.** `MainWindow` (search box + debounce + min-2-chars, virtual `ResultModel`,
    `ResultView` with Name/Path/Size/Date columns, sortable, status bar, menu bar, context
    menu), `SearchLineEdit` (Up/Down → list), open/reveal/copy/cut/trash/drag, First-Run &
    Settings dialogs, About. Wire to core. **Match the winindex screenshot layout** (§ below).
-6. **M5 — Live monitoring & privileged helper.** `InotifyWatcher` (unprivileged) first; then
+6. **M5 — Live monitoring & privileged helper. ⬅ NEXT.** `InotifyWatcher` (unprivileged) first; then
    `FanotifyMonitor` (privileged) + the `indexed-helper` binary + pkexec/polkit elevation
    (session-lifetime, §9.2) + `PKEXEC_UID`-based root-write hardening (`test_Elevation`).
    Signals/status-file control channel (§9.3). GUI reloads index on `.idx` change. Hotplug

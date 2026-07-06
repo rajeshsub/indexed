@@ -13,6 +13,8 @@ add_library(indexed_ui_core STATIC
     DisplayEntry.cpp
     DisplayFormat.h
     DisplayFormat.cpp
+    StatusText.h
+    StatusText.cpp
 )
 
 target_include_directories(indexed_ui_core
@@ -31,6 +33,18 @@ indexed_enable_warnings(indexed_ui_core)
 # under tests/ links this instead of duplicating the widget .cpp into every
 # test executable.
 add_library(indexed_ui_widgets STATIC
+    ResultModel.h
+    ResultModel.cpp
+    SearchCoordinator.h
+    SearchCoordinator.cpp
+    ResultView.h
+    ResultView.cpp
+    SearchLineEdit.h
+    SearchLineEdit.cpp
+    FirstRunDialog.h
+    FirstRunDialog.cpp
+    SettingsDialog.h
+    SettingsDialog.cpp
 )
 
 target_include_directories(indexed_ui_widgets
@@ -49,6 +63,8 @@ indexed_enable_warnings(indexed_ui_widgets)
 
 add_executable(indexed
     main.cpp
+    MainWindow.h
+    MainWindow.cpp
 )
 
 target_link_libraries(indexed
