@@ -4,7 +4,12 @@ add_library(indexed_core STATIC
     Version.cpp
     indexer/IFileSystemScanner.h
     indexer/IChangeMonitor.h
+    indexer/Indexer.h
+    indexer/Indexer.cpp
+    indexer/WalkScanner.h
+    indexer/WalkScanner.cpp
     storage/EntryMeta.h
+    storage/IIndexStore.h
     storage/IndexPool.h
     storage/IndexPool.cpp
     storage/IndexStore.h
@@ -22,6 +27,16 @@ add_library(indexed_core STATIC
     search/SimdSearchAvx2.cpp
     search/SearchEngine.h
     search/SearchEngine.cpp
+    platform/MountEnumerator.h
+    platform/MountEnumerator.cpp
+    settings/IniFile.h
+    settings/IniFile.cpp
+    settings/PathUtils.h
+    settings/PathUtils.cpp
+    settings/Settings.h
+    settings/Settings.cpp
+    settings/Logger.h
+    settings/Logger.cpp
 )
 
 set_source_files_properties(search/SimdSearchSse42.cpp PROPERTIES COMPILE_OPTIONS "-msse4.2")
@@ -35,6 +50,7 @@ target_link_libraries(indexed_core
     PUBLIC
         re2::re2
         utf8proc
+        PkgConfig::BLKID
 )
 
 indexed_enable_warnings(indexed_core)

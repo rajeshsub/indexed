@@ -55,6 +55,10 @@ set(UTF8PROC_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(UTF8PROC_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(utf8proc)
 
+find_package(PkgConfig REQUIRED)
+# Module is named "blkid" (not "libblkid") in this distro's blkid.pc.
+pkg_check_modules(BLKID REQUIRED IMPORTED_TARGET blkid)
+
 # ---------- Strict warnings for our own targets ----------
 include(cmake/CompilerWarnings.cmake)
 

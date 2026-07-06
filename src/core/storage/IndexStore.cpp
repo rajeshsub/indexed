@@ -73,6 +73,13 @@ void IndexStore::RemoveEntriesUnderPath(std::string_view pathPrefix) {
     }
 }
 
+void IndexStore::LoadPool(IndexPool pool, uint64_t buildTimestampNs, uint64_t lastMonitorStopNs) {
+    std::unique_lock lock(mutex_);
+    pool_ = std::move(pool);
+    buildTimestampNs_ = buildTimestampNs;
+    lastMonitorStopNs_ = lastMonitorStopNs;
+}
+
 const IndexPool& IndexStore::GetPool() const {
     return pool_;
 }

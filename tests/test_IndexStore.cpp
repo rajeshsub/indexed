@@ -1,9 +1,11 @@
 #include <gtest/gtest.h>
 
 #include "indexer/IFileSystemScanner.h"
+#include "storage/IndexPool.h"
 #include "storage/IndexStore.h"
 #include <mutex>
 #include <shared_mutex>
+#include <utility>
 
 using indexed::FileEntry;
 using indexed::IndexStore;
@@ -161,6 +163,29 @@ TEST(IndexStore, RemoveEntriesUnderPathMatchesOnlyTrueDescendants) {
     EXPECT_FALSE(isDeletedByPath("/home/user2/c.txt"));
     EXPECT_FALSE(isDeletedByPath("/home/userx.txt"));
     EXPECT_TRUE(isDeletedByPath("/home/user"));
+}
+
+TEST(IndexStore, LoadPoolInstallsPoolAndBothTimestamps) {
+    IndexStore store;
+    store.BeginWrite();
+    store.AddEntry(MakeEntry("stale.txt", "/home/user/stale.txt"));
+    store.EndWrite();
+    ASSERT_EQ(store.GetPool().Count(), 1u);
+
+    indexed::IndexPool loaded;
+    loaded.AddEntry(MakeEntry("loaded.txt", "/home/user/loaded.txt"));
+    loaded.AddEntry(MakeEntry("loaded2.txt", "/home/user/loaded2.txt"));
+
+    constexpr uint64_t kBuildTs = 42ULL;
+    constexpr uint64_t kMonitorStopTs = 99ULL;
+    store.LoadPool(std::move(loaded), kBuildTs, kMonitorStopTs);
+
+    EXPECT_EQ(store.GetPool().Count(), 2u);
+    EXPECT_FALSE(store.GetPool().FindByPath("/home/user/stale.txt").has_value());
+    EXPECT_TRUE(store.GetPool().FindByPath("/home/user/loaded.txt").has_value());
+    EXPECT_TRUE(store.GetPool().FindByPath("/home/user/loaded2.txt").has_value());
+    EXPECT_EQ(store.GetIndexAgeSeconds(kBuildTs), 0u);
+    EXPECT_EQ(store.GetLastMonitorStop(), kMonitorStopTs);
 }
 
 TEST(IndexStore, GetIndexAgeSecondsReturnsDeltaFromBuildTimestamp) {

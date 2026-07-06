@@ -9,6 +9,12 @@ add_executable(indexed_tests
     test_TokenMatcher.cpp
     test_SimdSearch.cpp
     test_SearchEngine.cpp
+    test_Indexer.cpp
+    test_WalkScanner.cpp
+    test_MountEnumerator.cpp
+    test_IniFile.cpp
+    test_Settings.cpp
+    test_PathUtils.cpp
 )
 
 target_link_libraries(indexed_tests
