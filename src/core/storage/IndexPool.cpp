@@ -5,22 +5,13 @@
 
 namespace indexed {
 
-namespace {
-
-// ASCII case-fold, matching plan §7.4's deferral of full utf8proc diacritics
-// folding to M2 (SearchEngine): the nameLower pool only needs to be a fast
-// default lowercase match target, not diacritics-aware. Non-ASCII bytes pass
-// through unchanged (UTF-8 continuation bytes are always >= 0x80 and never
-// collide with ASCII 'A'-'Z', so this is safe on multi-byte UTF-8 input).
-std::string CaseFoldAscii(std::string_view name) {
-    std::string result(name);
+std::string CaseFoldAscii(std::string_view text) {
+    std::string result(text);
     std::transform(result.begin(), result.end(), result.begin(), [](char c) {
         return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
     });
     return result;
 }
-
-}  // namespace
 
 void IndexPool::AddEntry(const FileEntry& entry) {
     EntryMeta meta;

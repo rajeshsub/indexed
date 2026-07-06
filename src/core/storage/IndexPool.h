@@ -4,10 +4,19 @@
 #include "storage/EntryMeta.h"
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
 namespace indexed {
+
+// ASCII case-fold: 'A'-'Z' -> 'a'-'z', all other bytes (including UTF-8
+// continuation bytes, always >= 0x80) pass through unchanged. Used to build
+// IndexPool's nameLowerPool, and reused by SearchEngine (M2) to fold path
+// text and query text on the fly for matchPath/case-insensitive search,
+// since there is no precomputed pathLower pool (docs/adr/0006 defers it,
+// matching winindex's own pathLower deferral).
+std::string CaseFoldAscii(std::string_view text);
 
 // Flat-pool in-memory index layout (docs/adr/0006-pool-based-index-layout.md):
 // name/path strings live in two contiguous byte pools instead of per-entry

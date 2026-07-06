@@ -1,11 +1,14 @@
-# M2+ adds test_SearchEngine, test_TokenMatcher, test_WalkScanner, test_Indexer,
-# test_Settings, test_MountEnumerator, test_PathUtils, test_Elevation, and tests/mocks/ here.
+# M3+ adds test_SearchEngine, test_WalkScanner, test_Indexer, test_Settings,
+# test_MountEnumerator, test_PathUtils, test_Elevation, and tests/mocks/ here.
 add_executable(indexed_tests
     test_main.cpp
     test_Scaffold.cpp
     test_IndexPool.cpp
     test_IndexStore.cpp
     test_IndexSerializer.cpp
+    test_TokenMatcher.cpp
+    test_SimdSearch.cpp
+    test_SearchEngine.cpp
 )
 
 target_link_libraries(indexed_tests
