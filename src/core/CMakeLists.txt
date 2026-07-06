@@ -3,6 +3,7 @@ add_library(indexed_core STATIC
     Version.h
     Version.cpp
     indexer/IFileSystemScanner.h
+    indexer/IChangeMonitor.h
     storage/EntryMeta.h
     storage/IndexPool.h
     storage/IndexPool.cpp
