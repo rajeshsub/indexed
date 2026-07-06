@@ -738,6 +738,14 @@ Jobs (mirror winindex's structure):
 - **Coverage target:** meaningful-logic coverage in the core (winindex used Codecov; keep it).
 - Tests must not require root; privileged paths (fanotify) are integration-tested manually /
   behind a guard, and unit-tested via the `IChangeMonitor` mock.
+- **M4 GUI test tier (decided when M4 started, not originally specified above):** Qt-free
+  presentation logic (`DisplayEntry`/`DisplayFormat`, `ResultModel` data mapping, key-routing
+  logic, dialog field validation) is split out of Qt widget code and unit-tested with plain
+  gtest, no `QApplication` required (see `indexed_ui_core` target in `src/ui/CMakeLists.txt`).
+  Actual Qt widgets are tested with QTest (`QSignalSpy`, simulated key/mouse events) run
+  headless via `QT_QPA_PLATFORM=offscreen`, wired into the same CI/pre-commit gates as the
+  core suite. Pure-layout chrome (menu/toolbar/status-bar wiring in `MainWindow`) is verified
+  manually via `/run`, not automated.
 
 ---
 
@@ -746,7 +754,7 @@ Jobs (mirror winindex's structure):
 Each milestone should compile, pass tests, and be committed. TDD where practical.
 
 > **Progress tracker** (kept current as milestones land — check here before resuming
-> work in a fresh session): **M0 ✅ · M1 ✅ · M2 ✅ · M3 onward: not started.**
+> work in a fresh session): **M0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ · M4 onward: not started.**
 > See `CLAUDE.md` for the workflow conventions (TDD discipline, subagent parallelization,
 > verification requirements) that apply to every remaining milestone.
 
@@ -760,11 +768,11 @@ Each milestone should compile, pass tests, and be committed. TDD where practical
    aarch64 scalar-only for v0.1.0, NEON deferred), `TokenMatcher`, utf8proc
    case-fold/diacritics, `ISearchEngine`. Full unit tests (`test_SearchEngine`) reading a
    hand-built index prove end-to-end search headless — no CLI needed for this.
-4. **M3 — Scanner & indexer. ⬅ NEXT.** `WalkScanner` (getdents64 + statx, parallel, exclusions,
+4. **M3 — Scanner & indexer. ✅ DONE.** `WalkScanner` (getdents64 + statx, parallel, exclusions,
    symlink/mount handling), `Indexer` orchestration (build/load/save/stale/incremental) with
    mocks. `MountEnumerator`. `Settings`/`IniFile`/`PathUtils`/`Logger` (newline-delimited
    path lists).
-5. **M4 — Qt GUI.** `MainWindow` (search box + debounce + min-2-chars, virtual `ResultModel`,
+5. **M4 — Qt GUI. ⬅ NEXT.** `MainWindow` (search box + debounce + min-2-chars, virtual `ResultModel`,
    `ResultView` with Name/Path/Size/Date columns, sortable, status bar, menu bar, context
    menu), `SearchLineEdit` (Up/Down → list), open/reveal/copy/cut/trash/drag, First-Run &
    Settings dialogs, About. Wire to core. **Match the winindex screenshot layout** (§ below).

@@ -15,11 +15,14 @@ add_executable(indexed_tests
     test_IniFile.cpp
     test_Settings.cpp
     test_PathUtils.cpp
+    test_DisplayFormat.cpp
+    test_DisplayEntry.cpp
 )
 
 target_link_libraries(indexed_tests
     PRIVATE
         indexed_core
+        indexed_ui_core
         GTest::gtest
         GTest::gmock
 )
