@@ -745,17 +745,22 @@ Jobs (mirror winindex's structure):
 
 Each milestone should compile, pass tests, and be committed. TDD where practical.
 
-1. **M0 — Scaffold.** Repo hygiene files, MIT LICENSE, top-level CMake, `core`/`ui`/
+> **Progress tracker** (kept current as milestones land — check here before resuming
+> work in a fresh session): **M0 ✅ · M1 ✅ · M2 ✅ · M3 onward: not started.**
+> See `CLAUDE.md` for the workflow conventions (TDD discipline, subagent parallelization,
+> verification requirements) that apply to every remaining milestone.
+
+1. **M0 — Scaffold. ✅ DONE.** Repo hygiene files, MIT LICENSE, top-level CMake, `core`/`ui`/
    `helper`/`tests` skeletons (no `cli/` — CLI dropped), FetchContent (gtest/re2/absl/utf8proc),
    Qt found, CI green on an empty build + one trivial test. `.desktop`/icon placeholder.
-2. **M1 — Core data model & storage.** `FileEntry`, `EntryMeta` (64-bit pool offsets),
+2. **M1 — Core data model & storage. ✅ DONE.** `FileEntry`, `EntryMeta` (64-bit pool offsets),
    `IndexPool`, `IndexStore`, `IndexSerializer` (+ format v1), full unit tests + round-trip.
    No Qt.
-3. **M2 — Search engine.** `SearchEngine`, `SimdSearch` (scalar first, then AVX2/SSE4.2;
+3. **M2 — Search engine. ✅ DONE.** `SearchEngine`, `SimdSearch` (scalar first, then AVX2/SSE4.2;
    aarch64 scalar-only for v0.1.0, NEON deferred), `TokenMatcher`, utf8proc
    case-fold/diacritics, `ISearchEngine`. Full unit tests (`test_SearchEngine`) reading a
    hand-built index prove end-to-end search headless — no CLI needed for this.
-4. **M3 — Scanner & indexer.** `WalkScanner` (getdents64 + statx, parallel, exclusions,
+4. **M3 — Scanner & indexer. ⬅ NEXT.** `WalkScanner` (getdents64 + statx, parallel, exclusions,
    symlink/mount handling), `Indexer` orchestration (build/load/save/stale/incremental) with
    mocks. `MountEnumerator`. `Settings`/`IniFile`/`PathUtils`/`Logger` (newline-delimited
    path lists).
