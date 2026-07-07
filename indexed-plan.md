@@ -784,6 +784,23 @@ Each milestone should compile, pass tests, and be committed. TDD where practical
 7. **M6 — Packaging & polish. ⬅ NEXT.** AppImage build, AppStream metainfo, README + screenshot,
    CHANGELOG, ADRs finalized, release CI job, tag `v0.1.0`.
 
+   > **M6 handoff notes (2026-07-07):** repo hygiene files (LICENSE/README/CHANGELOG/ADRs/
+   > `.clang-format`/etc.) and `.github/workflows/ci.yml` already exist from M0 but are stale
+   > placeholders — README says "M0 scaffold" and has no Settings/Shortcuts/Releases sections
+   > or screenshot; CHANGELOG has no M1-M5 entries; CI has `lint`/`build-debug`/`build-release`/
+   > `build-asan` jobs but is **missing the `release` job** (AppImage-on-tag, §14.3 item 5).
+   > `packaging/appimage/` and `packaging/icons/` don't exist yet — new for M6.
+   > `packaging/polkit/org.indexed.helper.policy` already exists (M5) and is wired into
+   > `src/helper/CMakeLists.txt`'s install rule.
+   > Also note the `build-asan` CI job has a stale test exclusion
+   > (`ctest -E "MountEnumerator|Indexer"`) with a comment "re-enable once M3 lands with proper
+   > mocks" — M3-M5 have since landed; revisit whether that exclusion is still needed.
+   > Dev-sandbox tooling check (may differ in CI): ImageMagick (`convert`/`magick`) available
+   > for icon rasterization; no `rsvg-convert`/`inkscape`/`linuxdeploy` installed, but network
+   > access works, so `linuxdeploy` can be fetched at build time the way the real AppImage
+   > build (and CI) will — the sandbox just can't fully dry-run the AppImage build itself.
+   > Tagging `v0.1.0` is a git action requiring the developer's go-ahead, not done unilaterally.
+
 ---
 
 ## 17. Risks (resolved in grill-me — see `docs/adr/` for the structural ones)

@@ -79,3 +79,9 @@ target_link_libraries(indexed
 indexed_enable_warnings(indexed)
 
 install(TARGETS indexed DESTINATION bin)
+install(FILES ${CMAKE_SOURCE_DIR}/packaging/indexed.desktop
+        DESTINATION share/applications)
+install(FILES ${CMAKE_SOURCE_DIR}/packaging/metainfo/org.indexed.indexed.metainfo.xml
+        DESTINATION share/metainfo)
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/packaging/icons/hicolor
+        DESTINATION share/icons)

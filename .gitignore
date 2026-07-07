@@ -10,3 +10,6 @@ install/
 *.log
 docs/doxygen/
 compile_commands.json
+/packaging/appimage/tools/
+/packaging/appimage/AppDir/
+/packaging/appimage/*.AppImage

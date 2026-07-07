@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.indexed.indexed</id>
+  <name>indexed</name>
+  <summary>Blazing-fast file search for Linux</summary>
+
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+
+  <developer id="org.indexed">
+    <name>indexed contributors</name>
+  </developer>
+
+  <description>
+    <p>
+      indexed builds a full index of your local filesystems and returns search
+      results as you type, with no perceptible delay even across millions of
+      files. It is a feature-for-feature Linux port of winindex.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Instant, debounced search over a persistent on-disk index</li>
+      <li>Live index updates via fanotify (privileged helper) or inotify</li>
+      <li>Regex search powered by RE2</li>
+      <li>SIMD-accelerated substring search (AVX2/SSE4.2) with runtime dispatch</li>
+      <li>Word-level (token-set) matching, case/diacritics/whole-word options</li>
+      <li>Portable mode, smart default exclusions, full context-menu integration</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">indexed.desktop</launchable>
+
+  <url type="homepage">https://github.com/rajeshsub/indexed</url>
+  <url type="bugtracker">https://github.com/rajeshsub/indexed/issues</url>
+
+  <provides>
+    <binary>indexed</binary>
+  </provides>
+
+  <releases>
+    <release version="0.1.0" date="2026-07-07">
+      <description>
+        <p>First release: search, live monitoring, and privileged helper for full-system indexing.</p>
+      </description>
+    </release>
+  </releases>
+
+  <content_rating type="oars-1.1"/>
+
+  <categories>
+    <category>Utility</category>
+    <category>System</category>
+    <category>FileTools</category>
+  </categories>
+
+  <keywords>
+    <keyword>search</keyword>
+    <keyword>find</keyword>
+    <keyword>file</keyword>
+    <keyword>index</keyword>
+  </keywords>
+</component>
