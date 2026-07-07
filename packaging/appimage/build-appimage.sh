@@ -59,5 +59,7 @@ rm -f "$APPIMAGE_DIR"/indexed-*.AppImage
         --output appimage
 )
 
-mv "$APPIMAGE_DIR"/indexed-*.AppImage "$OUTPUT"
+for f in "$APPIMAGE_DIR"/indexed-*.AppImage; do
+    [[ "$f" == "$OUTPUT" ]] || mv "$f" "$OUTPUT"
+done
 echo "Built $OUTPUT"

@@ -179,8 +179,15 @@ void MainWindow::WireSearch() {
             }
         }
     });
+    connect(searchBox_, &SearchLineEdit::SearchCleared, this, [this]() {
+        coordinator_->SetQuery(QString());  // cancels any in-flight search worker
+        resultModel_->SetEntries({});
+    });
     connect(coordinator_, &SearchCoordinator::ResultsReady, this,
             [this](std::vector<DisplayEntry> entries, bool capped) {
+                if (searchBox_->text().size() < 2) {
+                    return;  // box was cleared while this search was in flight
+                }
                 const size_t count = entries.size();
                 resultModel_->SetEntries(std::move(entries));
                 statusBar()->showMessage(QString::fromStdString(ResultCountText(count, capped)));
@@ -350,7 +357,10 @@ void MainWindow::ShowSettingsDialog() {
     }
 
     // §19: diff old vs new roots -> incremental IndexPaths/RemovePaths;
-    // full rebuild when both sides changed.
+    // full rebuild when both sides changed. Either incremental path must
+    // also persist the index (or a restart within the reindex interval
+    // load-if-fresh's the pre-change index back) and restart local
+    // monitoring so it covers the new root set.
     const RootsDiff diff = DiffRoots(oldRoots, result.selectedRoots);
     if (!diff.added.empty() && !diff.removed.empty()) {
         StartIndexing(/*force=*/true);
@@ -358,13 +368,32 @@ void MainWindow::ShowSettingsDialog() {
     }
     JoinIndexThread();
     if (!diff.added.empty()) {
-        indexThread_ = std::thread([this, added = diff.added]() {
-            indexer_->IndexPaths(added);
-            QMetaObject::invokeMethod(this, [this]() { UpdateIdleStatus(); }, Qt::QueuedConnection);
+        StopLocalMonitoring();
+        SetSearchUiEnabled(false);  // same UX as a full rebuild (§19)
+        statusBar()->showMessage(tr("Indexing…"));
+        indexThread_ = std::thread([this, added = diff.added, excluded = result.excludedPaths]() {
+            indexer_->IndexPaths(added, excluded);
+            indexer_->PersistIndex(idxFilePath_, NowNs());
+            QMetaObject::invokeMethod(
+                this,
+                [this]() {
+                    lastBuildAgeSeconds_ = store_.GetIndexAgeSeconds(NowNs());
+                    SetSearchUiEnabled(true);
+                    UpdateIdleStatus();
+                    searchBox_->setFocus();
+                    if (!elevated_) {
+                        StartLocalMonitoring();
+                    }
+                },
+                Qt::QueuedConnection);
         });
     } else if (!diff.removed.empty()) {
+        StopLocalMonitoring();
         indexer_->RemovePaths(diff.removed);
+        indexer_->PersistIndex(idxFilePath_, NowNs());
+        lastBuildAgeSeconds_ = store_.GetIndexAgeSeconds(NowNs());
         UpdateIdleStatus();
+        StartLocalMonitoring();
     }
 }
 

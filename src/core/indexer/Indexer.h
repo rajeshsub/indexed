@@ -58,12 +58,24 @@ public:
                        uint64_t nowNs, uint64_t staleThresholdSeconds);
 
     // Incremental add: scans just `paths` and adds each discovered entry via
-    // IIndexStore::ApplyAdd (not a full rebuild).
-    void IndexPaths(const std::vector<std::string>& paths);
+    // IIndexStore::ApplyAdd (not a full rebuild). excludedPaths is honored
+    // exactly as in a full scan -- an added root must not drag its excluded
+    // subfolders into the index.
+    void IndexPaths(const std::vector<std::string>& paths,
+                    const std::vector<std::string>& excludedPaths = {});
 
     // Incremental remove: marks every entry under each path deleted via
     // IIndexStore::RemoveEntriesUnderPath.
     void RemovePaths(const std::vector<std::string>& paths);
+
+    // Saves the store's current pool to idxFilePath, stamping nowNs as the
+    // new build timestamp. Callers use this after IndexPaths/RemovePaths so
+    // a settings-driven incremental change survives restart -- otherwise the
+    // next load-if-fresh StartIndexing would resurrect the pre-change index
+    // from disk. Same precondition as StartIndexing's save: the caller must
+    // ensure no concurrent writer is mutating the store (stop live
+    // monitoring first).
+    void PersistIndex(const std::string& idxFilePath, uint64_t nowNs);
 
     // Obtains one IChangeMonitor per root via the injected factory and starts
     // each on its own background thread; blocks (joining those threads)

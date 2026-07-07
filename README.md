@@ -10,13 +10,14 @@ millions of files. It is a feature-for-feature Linux port of
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![CI](https://github.com/rajeshsub/indexed/actions/workflows/ci.yml/badge.svg)
 
-**Status: early development (M0 scaffold).** See [`indexed-plan.md`](indexed-plan.md)
-for the full implementation plan, milestones, and `docs/adr/` for the structural
-decisions behind the design.
+**Status: feature-complete, pre-release (M6 packaging/polish).** All milestones through
+live monitoring are done (M0–M5); see [`indexed-plan.md`](indexed-plan.md) for the full
+implementation plan, milestone tracker, and `docs/adr/` for the structural decisions
+behind the design.
 
 ---
 
-## Features (planned for v0.1.0)
+## Features
 
 - **Instant search** — results appear as you type, debounced at 150 ms
 - **Parallel directory-walk scanning** — a `getdents64` + `statx` walker, parallelized
@@ -69,6 +70,70 @@ only loads/searches the on-disk index in-process.
 
 ---
 
+## Releases
+
+Prebuilt `indexed-x86_64.AppImage` builds are attached to
+[GitHub Releases](https://github.com/rajeshsub/indexed/releases) on tagged versions.
+
+```bash
+chmod +x indexed-x86_64.AppImage
+./indexed-x86_64.AppImage
+```
+
+The AppImage bundles Qt; no system Qt install is required to run it. The first action
+that needs full-filesystem monitoring (fanotify) prompts once via `pkexec`/polkit for
+the lifetime of the GUI session — see "Privileged monitoring" below.
+
+---
+
+## Settings
+
+Available from the menu bar (First-Run dialog shows the same fields on first launch):
+
+- **Paths to index** — add/remove the mounts or directories indexed
+- **Automatic Reindex** — "Manual only", or an interval in hours/days
+- **Excluded folders** — pseudo-filesystems, container storage, and Flatpak data are
+  excluded by default; add/remove your own
+- **Portable mode** — place an `indexed.conf` next to the executable to keep all data
+  (index, settings, logs) in that directory instead of `$XDG_*`
+
+## Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Alt+1` | Toggle Regular Expression |
+| `Alt+2` | Toggle Case Sensitive |
+| `Alt+3` | Toggle Whole Word |
+| `Alt+4` | Toggle Match Path |
+| `Alt+5` | Toggle Ignore Diacritics |
+| `Up` / `Down` (in search box) | Move selection in the result list |
+| `Enter` | Open selected file |
+| `Ctrl+Enter` | Open containing folder |
+| `Ctrl+C` | Copy full path(s) |
+| `Ctrl+X` | Cut (move) |
+| `Delete` | Move to Trash |
+
+## Privileged monitoring
+
+Full-system live monitoring uses `fanotify`, which requires root; `indexed-helper`
+requests that once per GUI session via `pkexec` (see
+`docs/adr/0008-privileged-helper-and-elevation.md`). Without elevation, indexed still
+works fully, falling back to unprivileged `inotify` watches per indexed root.
+
+The polkit policy (`packaging/polkit/org.indexed.helper.policy`) must be registered on
+the system for the `pkexec` prompt to appear — `cmake --install` places it under
+`share/polkit-1/actions` on distro-style installs. **The AppImage does not do this
+automatically** (AppImages are installer-free by design); until a proper first-run
+installer exists, copy it once manually:
+
+```bash
+./indexed-x86_64.AppImage --appimage-extract usr/share/polkit-1/actions/org.indexed.helper.policy
+sudo cp squashfs-root/usr/share/polkit-1/actions/org.indexed.helper.policy /usr/share/polkit-1/actions/
+rm -rf squashfs-root
+```
+
+---
+
 ## Building
 
 ### Requirements
@@ -104,6 +169,16 @@ cmake --build --preset linux-gcc-release
 ./build.sh test
 ```
 
+### Building the AppImage
+
+```bash
+packaging/appimage/build-appimage.sh
+```
+
+Configures/builds a release tree if needed, then uses **linuxdeploy** +
+**linuxdeploy-plugin-qt** (fetched on first run, cached under
+`packaging/appimage/tools/`) to produce `packaging/appimage/indexed-x86_64.AppImage`.
+
 ---
 
 ## Project structure
@@ -116,8 +191,11 @@ indexed/
     helper/     privileged indexer + fanotify monitor entry point
   tests/        GoogleTest/GoogleMock unit tests
   docs/adr/     Architecture Decision Records
-  packaging/    .desktop file, AppImage build (M6)
-  .github/workflows/  CI: lint, build+test, ASAN, coverage
+  packaging/
+    indexed.desktop, icons/, metainfo/  desktop integration + AppStream metadata
+    polkit/       polkit policy for indexed-helper elevation
+    appimage/     build-appimage.sh, AppImage output (gitignored)
+  .github/workflows/  CI: lint, build+test, ASAN, coverage, release (AppImage on tag)
   CMakeLists.txt
   CMakePresets.json
   build.sh      Convenience wrapper: build.sh [debug|release|asan|test|all|clean]

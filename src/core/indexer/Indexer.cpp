@@ -69,9 +69,11 @@ void Indexer::StartIndexing(bool force, const ScanOptions& options, const std::s
     ReportStatus(IndexerState::Idle, "Indexing complete", filesFound, options.rootPaths, 0);
 }
 
-void Indexer::IndexPaths(const std::vector<std::string>& paths) {
+void Indexer::IndexPaths(const std::vector<std::string>& paths,
+                         const std::vector<std::string>& excludedPaths) {
     ScanOptions options;
     options.rootPaths = paths;
+    options.excludedPaths = excludedPaths;
     std::atomic<bool> cancelToken{false};
     scanner_.Scan(
         options, [this](const FileEntry& entry) { store_.ApplyAdd(entry); },
@@ -85,6 +87,11 @@ void Indexer::RemovePaths(const std::vector<std::string>& paths) {
     for (const std::string& path : paths) {
         store_.RemoveEntriesUnderPath(path);
     }
+}
+
+void Indexer::PersistIndex(const std::string& idxFilePath, uint64_t nowNs) {
+    store_.SetBuildTimestamp(nowNs);
+    IndexSerializer::Save(idxFilePath, store_.GetPool(), nowNs, store_.GetLastMonitorStop());
 }
 
 void Indexer::StartLiveMonitoring(const std::vector<std::string>& roots,

@@ -66,6 +66,21 @@ TEST(SearchEngine, TokenSetModeMatchesNonAdjacentOutOfOrderTokens) {
     EXPECT_EQ(results[0].entryIndex, 0u);
 }
 
+TEST(SearchEngine, TokenSetModeMatchesPartiallyTypedLastToken) {
+    // As-you-type: a result that matched at "just rosy" must not vanish at
+    // "just rosy guit" on the way to "just rosy guitar".
+    IndexPool pool;
+    pool.AddEntry(MakeEntry("LedZep_Just-Rosy_June-Bug_guitar.flac",
+                            "/music/LedZep_Just-Rosy_June-Bug_guitar.flac"));
+    pool.AddEntry(MakeEntry("unrelated_song.flac", "/music/unrelated_song.flac"));
+
+    SearchEngine engine;
+    auto results = engine.Search(pool, "just rosy guit", SearchOptions{}, kNeverCancel);
+
+    ASSERT_EQ(results.size(), 1u);
+    EXPECT_EQ(results[0].entryIndex, 0u);
+}
+
 TEST(SearchEngine, RegexModeMatchesPattern) {
     IndexPool pool;
     pool.AddEntry(MakeEntry("Report.pdf", "/x/Report.pdf"));

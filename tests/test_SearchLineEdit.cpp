@@ -14,6 +14,9 @@ private slots:
     void debounceFiresSearchRequestedAfter150ms();
     void debounceRestartsOnEachKeystroke();
     void belowTwoCharactersNeverEmitsSearchRequested();
+    void clearingTextEmitsSearchCleared();
+    void backspacingToOneCharEmitsSearchCleared();
+    void typingForwardNeverEmitsSearchCleared();
     void downKeyEmitsNavigateResultsRequested();
     void upKeyEmitsNavigateResultsRequestedToo();
     void clearingBackToEmptyReemitsEnterSearchTermStatus();
@@ -89,6 +92,35 @@ void TestSearchLineEdit::belowTwoCharactersNeverEmitsSearchRequested() {
     QTest::qWait(300);
 
     QCOMPARE(searchSpy.count(), 0);
+}
+
+void TestSearchLineEdit::clearingTextEmitsSearchCleared() {
+    SearchLineEdit edit;
+    QTest::keyClicks(&edit, "ab");
+
+    QSignalSpy clearedSpy(&edit, &SearchLineEdit::SearchCleared);
+    edit.clear();
+
+    QCOMPARE(clearedSpy.count(), 1);
+}
+
+void TestSearchLineEdit::backspacingToOneCharEmitsSearchCleared() {
+    SearchLineEdit edit;
+    QTest::keyClicks(&edit, "ab");
+
+    QSignalSpy clearedSpy(&edit, &SearchLineEdit::SearchCleared);
+    QTest::keyClick(&edit, Qt::Key_Backspace);  // "ab" -> "a": below threshold
+
+    QCOMPARE(clearedSpy.count(), 1);
+}
+
+void TestSearchLineEdit::typingForwardNeverEmitsSearchCleared() {
+    SearchLineEdit edit;
+    QSignalSpy clearedSpy(&edit, &SearchLineEdit::SearchCleared);
+
+    QTest::keyClicks(&edit, "abc");
+
+    QCOMPARE(clearedSpy.count(), 0);
 }
 
 void TestSearchLineEdit::downKeyEmitsNavigateResultsRequested() {

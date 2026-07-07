@@ -26,6 +26,12 @@ void IndexStore::BeginWrite() {
 }
 
 void IndexStore::AddEntry(const FileEntry& entry) {
+    // WalkScanner fans the initial scan out across hardware_concurrency()
+    // worker threads that each invoke this via the onEntry callback
+    // concurrently -- stagingPool_'s vectors need the same exclusive lock
+    // every other mutator takes, or concurrent push_back reallocation
+    // corrupts the heap.
+    std::unique_lock lock(mutex_);
     stagingPool_.AddEntry(entry);
 }
 

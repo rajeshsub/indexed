@@ -32,6 +32,12 @@ signals:
     // reaches 2+ characters (SearchRequested takes over at that point).
     void StatusMessageChanged(const QString& message);
 
+    // Emitted when the text drops below the 2-character search threshold
+    // (backspacing to 1 char, clearing to empty), so the owner can drop any
+    // displayed results immediately -- a query that can no longer run must
+    // not leave the previous query's results on screen.
+    void SearchCleared();
+
     // Emitted when Up or Down is pressed while this widget has focus, so
     // MainWindow can route focus to its results list.
     void NavigateResultsRequested(Qt::Key key);
@@ -45,6 +51,7 @@ private:
 
     QTimer* debounceTimer_;
     QString pendingQuery_;
+    bool hadSearchableQuery_ = false;
 };
 
 }  // namespace indexed

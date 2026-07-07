@@ -228,6 +228,45 @@ TEST(Indexer, IndexPathsScansGivenPathsAndAppliesAdd) {
     indexer.IndexPaths({"/mnt/usb"});
 }
 
+TEST(Indexer, IndexPathsForwardsExcludedPathsToScanner) {
+    NiceMock<MockFileSystemScanner> scanner;
+    NiceMock<MockIndexStore> store;
+
+    EXPECT_CALL(
+        scanner,
+        Scan(::testing::AllOf(Field(&ScanOptions::rootPaths, ElementsAre("/mnt/usb")),
+                              Field(&ScanOptions::excludedPaths, ElementsAre("/mnt/usb/.cache"))),
+             _, _, _))
+        .Times(1);
+
+    Indexer indexer(scanner, store, nullptr, nullptr);
+    indexer.IndexPaths({"/mnt/usb"}, {"/mnt/usb/.cache"});
+}
+
+TEST(Indexer, PersistIndexSavesCurrentPoolAndStampsBuildTimestamp) {
+    NiceMock<MockFileSystemScanner> scanner;
+    NiceMock<MockIndexStore> store;
+    IndexPool backingPool;
+    backingPool.AddEntry(MakeEntry("kept.txt", "/mnt/usb/kept.txt"));
+    ON_CALL(store, GetPool()).WillByDefault(ReturnRef(backingPool));
+    EXPECT_CALL(store, GetLastMonitorStop()).WillRepeatedly(Return(7ULL));
+    EXPECT_CALL(store, SetBuildTimestamp(42'000'000'000ULL)).Times(1);
+
+    const std::string idxPath = TempFilePath("persist_incremental");
+    std::remove(idxPath.c_str());
+
+    Indexer indexer(scanner, store, nullptr, nullptr);
+    indexer.PersistIndex(idxPath, /*nowNs=*/42'000'000'000ULL);
+
+    IndexSerializer::LoadResult result = IndexSerializer::Load(idxPath);
+    ASSERT_TRUE(result.success);
+    EXPECT_EQ(result.pool.Count(), 1u);
+    EXPECT_EQ(result.buildTimestampNs, 42'000'000'000ULL);
+    EXPECT_EQ(result.lastMonitorStopNs, 7ULL);
+
+    std::remove(idxPath.c_str());
+}
+
 TEST(Indexer, RemovePathsCallsRemoveEntriesUnderPathForEachPath) {
     NiceMock<MockFileSystemScanner> scanner;
     NiceMock<MockIndexStore> store;

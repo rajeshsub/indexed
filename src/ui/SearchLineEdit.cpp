@@ -40,16 +40,19 @@ void SearchLineEdit::keyPressEvent(QKeyEvent* event) {
 void SearchLineEdit::OnTextChanged(const QString& text) {
     debounceTimer_->stop();
 
-    if (text.isEmpty()) {
-        emit StatusMessageChanged(kEnterSearchTermStatus);
-        return;
-    }
-
     if (text.length() < kMinQueryLength) {
-        emit StatusMessageChanged(kTypeAtLeastTwoStatus);
+        emit StatusMessageChanged(text.isEmpty() ? kEnterSearchTermStatus : kTypeAtLeastTwoStatus);
+        // Only a >= 2 char query can have produced visible results; signal a
+        // clear exactly when dropping back below that threshold, not on
+        // every keystroke of a still-too-short query.
+        if (hadSearchableQuery_) {
+            hadSearchableQuery_ = false;
+            emit SearchCleared();
+        }
         return;
     }
 
+    hadSearchableQuery_ = true;
     pendingQuery_ = text;
     debounceTimer_->start();
 }

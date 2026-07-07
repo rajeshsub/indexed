@@ -13,14 +13,18 @@ namespace indexed {
 // Empty input produces zero tokens.
 std::vector<std::string_view> Tokenize(std::string_view text);
 
-// True if every token in queryTokens has an exact string match somewhere in
+// True if every token in queryTokens is a substring of at least one token in
 // nameTokens (order-independent — queryTokens need not appear in the same
-// order they occur in nameTokens). Duplicate tokens are NOT special-cased:
-// if queryTokens contains "guitar" twice, only ONE occurrence of "guitar" in
-// nameTokens is still sufficient (this is a per-token existence check, not a
-// multiset/count-based match). An empty queryTokens vector trivially
-// matches (returns true) — vacuous truth, no query tokens means nothing is
-// required to be present.
+// order they occur in nameTokens). Substring, not exact equality, is what
+// makes search-as-you-type work in token mode: "just rosy guit" must keep
+// matching guitar-ish names while the user is still typing "guitar" (the
+// winindex README's "appears somewhere in the filename token set"). Matching
+// is per-token, so a query token never matches text spanning a separator.
+// Duplicate tokens are NOT special-cased: if queryTokens contains "guitar"
+// twice, only ONE occurrence of "guitar" in nameTokens is still sufficient
+// (this is a per-token existence check, not a multiset/count-based match).
+// An empty queryTokens vector trivially matches (returns true) — vacuous
+// truth, no query tokens means nothing is required to be present.
 bool MatchesAllTokens(const std::vector<std::string_view>& queryTokens,
                       const std::vector<std::string_view>& nameTokens);
 

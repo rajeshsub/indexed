@@ -85,6 +85,32 @@ TEST(TokenMatcher, MatchesAllTokensEmptyQueryAndEmptyNameTokensMatches) {
     EXPECT_TRUE(MatchesAllTokens(emptyQuery, emptyName));
 }
 
+TEST(TokenMatcher, MatchesAllTokensPartiallyTypedLastTokenMatches) {
+    // Search-as-you-type: "just rosy guit" while heading for "guitar" must
+    // keep matching (winindex README: every query token "appears somewhere
+    // in the filename token set" -- substring, not exact equality).
+    std::vector<std::string_view> nameTokens = Tokenize("ledzep_just-rosy_june-bug_guitar.flac");
+    std::vector<std::string_view> queryTokens = Tokenize("just rosy guit");
+
+    EXPECT_TRUE(MatchesAllTokens(queryTokens, nameTokens));
+}
+
+TEST(TokenMatcher, MatchesAllTokensInnerSubstringOfNameTokenMatches) {
+    std::vector<std::string_view> nameTokens = Tokenize("ledzep_just-rosy_june-bug_guitar.flac");
+    std::vector<std::string_view> queryTokens = Tokenize("zep guitar");
+
+    EXPECT_TRUE(MatchesAllTokens(queryTokens, nameTokens));
+}
+
+TEST(TokenMatcher, MatchesAllTokensSubstringMustNotSpanSeparators) {
+    // "epjust" only exists in the name if the '_' separator is ignored;
+    // tokens are matched individually, so this must NOT match.
+    std::vector<std::string_view> nameTokens = Tokenize("ledzep_just-rosy");
+    std::vector<std::string_view> queryTokens = Tokenize("epjust rosy");
+
+    EXPECT_FALSE(MatchesAllTokens(queryTokens, nameTokens));
+}
+
 TEST(TokenMatcher, MatchesAllTokensDuplicateQueryTokenMatchesSingleOccurrence) {
     std::vector<std::string_view> nameTokens = Tokenize("just rosy guitar");
     std::vector<std::string_view> queryTokens = Tokenize("guitar guitar");

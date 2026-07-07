@@ -39,7 +39,10 @@ bool MatchesAllTokens(const std::vector<std::string_view>& queryTokens,
                       const std::vector<std::string_view>& nameTokens) {
     return std::all_of(
         queryTokens.begin(), queryTokens.end(), [&nameTokens](std::string_view queryToken) {
-            return std::find(nameTokens.begin(), nameTokens.end(), queryToken) != nameTokens.end();
+            return std::any_of(nameTokens.begin(), nameTokens.end(),
+                               [queryToken](std::string_view nameToken) {
+                                   return nameToken.find(queryToken) != std::string_view::npos;
+                               });
         });
 }
 
