@@ -12,3 +12,5 @@ target_link_libraries(indexed-helper
 indexed_enable_warnings(indexed-helper)
 
 install(TARGETS indexed-helper DESTINATION bin)
+install(FILES ${CMAKE_SOURCE_DIR}/packaging/polkit/org.indexed.helper.policy
+       DESTINATION share/polkit-1/actions)

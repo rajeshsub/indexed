@@ -4,8 +4,14 @@ add_library(indexed_core STATIC
     Version.cpp
     indexer/IFileSystemScanner.h
     indexer/IChangeMonitor.h
+    indexer/FanotifyMonitor.h
+    indexer/FanotifyMonitor.cpp
+    indexer/InotifyWatcher.h
+    indexer/InotifyWatcher.cpp
     indexer/Indexer.h
     indexer/Indexer.cpp
+    indexer/StatusFile.h
+    indexer/StatusFile.cpp
     indexer/WalkScanner.h
     indexer/WalkScanner.cpp
     storage/EntryMeta.h
@@ -29,6 +35,8 @@ add_library(indexed_core STATIC
     search/SearchEngine.cpp
     platform/MountEnumerator.h
     platform/MountEnumerator.cpp
+    platform/Elevation.h
+    platform/Elevation.cpp
     settings/IniFile.h
     settings/IniFile.cpp
     settings/PathUtils.h

@@ -10,7 +10,11 @@ add_executable(indexed_tests
     test_SimdSearch.cpp
     test_SearchEngine.cpp
     test_Indexer.cpp
+    test_StatusFile.cpp
     test_WalkScanner.cpp
+    test_InotifyWatcher.cpp
+    test_FanotifyMonitor.cpp
+    test_Elevation.cpp
     test_MountEnumerator.cpp
     test_IniFile.cpp
     test_Settings.cpp

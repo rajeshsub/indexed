@@ -1,5 +1,7 @@
 #include "ui/MainWindow.h"
 
+#include <unistd.h>
+
 #include <QApplication>
 #include <QClipboard>
 #include <QDBusConnection>
@@ -15,10 +17,18 @@
 #include <QVBoxLayout>
 
 #include "Version.h"
+#include "indexer/InotifyWatcher.h"
+#include "indexer/StatusFile.h"
+#include "storage/IndexSerializer.h"
 #include "ui/DisplayEntry.h"
 #include "ui/SettingsDialog.h"
 #include "ui/StatusText.h"
+#include <algorithm>
 #include <chrono>
+#include <csignal>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 
 namespace indexed {
 
@@ -40,14 +50,19 @@ MainWindow::MainWindow(Settings& settings, IndexStore& store, ISearchEngine& eng
       store_(store),
       scanner_(scanner),
       idxFilePath_(std::move(idxFilePath)),
-      logPath_(std::move(logPath)) {
+      logPath_(std::move(logPath)),
+      statusFilePath_(
+          (std::filesystem::path(idxFilePath_).parent_path() / "indexed.status").string()) {
     setWindowTitle("indexed");
     resize(900, 600);
 
-    // No live monitors in M4 -- the factory hands Indexer a null monitor per
-    // root; FanotifyMonitor/InotifyWatcher arrive in M5.
-    indexer_ = std::make_unique<Indexer>(
-        scanner_, store_, [](const std::string&) { return std::unique_ptr<IChangeMonitor>(); });
+    // Unprivileged default (§7.2/§9): InotifyWatcher per root. The GUI
+    // process never has CAP_SYS_ADMIN, so this is the only backend it could
+    // ever use for its own local monitoring; FanotifyMonitor only runs
+    // inside the privileged indexed-helper (see ElevateForFullAccess).
+    indexer_ = std::make_unique<Indexer>(scanner_, store_, [](const std::string&) {
+        return std::unique_ptr<IChangeMonitor>(std::make_unique<InotifyWatcher>());
+    });
 
     auto* central = new QWidget(this);
     auto* layout = new QVBoxLayout(central);
@@ -78,9 +93,16 @@ MainWindow::MainWindow(Settings& settings, IndexStore& store, ISearchEngine& eng
     WireResultActions();
 
     searchBox_->setFocus();
+    StartHotplugWatcher();
 }
 
 MainWindow::~MainWindow() {
+    StopHotplugWatcher();
+    StopLocalMonitoring();
+    if (elevated_ && helperProcess_ && helperProcess_->state() == QProcess::Running) {
+        SendSignalToHelper(SIGTERM);
+        helperProcess_->waitForFinished(3000);
+    }
     JoinIndexThread();
 }
 
@@ -120,10 +142,19 @@ void MainWindow::BuildMenus() {
 
     QMenu* indexMenu = menuBar()->addMenu(tr("&Index"));
     QAction* rebuild = indexMenu->addAction(tr("Rebuild Index Now"));
-    connect(rebuild, &QAction::triggered, this, [this]() { StartIndexing(/*force=*/true); });
+    connect(rebuild, &QAction::triggered, this, [this]() {
+        if (elevated_) {
+            SendSignalToHelper(SIGUSR1);  // §9.3: reindex-now request
+        } else {
+            StartIndexing(/*force=*/true);
+        }
+    });
     indexMenu->addSeparator();
     QAction* settingsAction = indexMenu->addAction(tr("Settings…"));
     connect(settingsAction, &QAction::triggered, this, &MainWindow::ShowSettingsDialog);
+    indexMenu->addSeparator();
+    elevateAction_ = indexMenu->addAction(tr("Elevate for Full-System Access…"));
+    connect(elevateAction_, &QAction::triggered, this, &MainWindow::ElevateForFullAccess);
 
     QMenu* helpMenu = menuBar()->addMenu(tr("&Help"));
     QAction* openLog = helpMenu->addAction(tr("Open Log File"));
@@ -268,9 +299,26 @@ void MainWindow::StartIndexing(bool force) {
                 SetSearchUiEnabled(true);
                 UpdateIdleStatus();
                 searchBox_->setFocus();  // §19: auto-focus after indexing
+                if (!elevated_) {
+                    StartLocalMonitoring();
+                }
             },
             Qt::QueuedConnection);
     });
+}
+
+void MainWindow::StartLocalMonitoring() {
+    StopLocalMonitoring();
+    localMonitorStop_.store(false);
+    localMonitorThread_ = std::thread(
+        [this]() { indexer_->StartLiveMonitoring(settings_.SelectedRoots(), localMonitorStop_); });
+}
+
+void MainWindow::StopLocalMonitoring() {
+    localMonitorStop_.store(true);
+    if (localMonitorThread_.joinable()) {
+        localMonitorThread_.join();
+    }
 }
 
 void MainWindow::ShowSettingsDialog() {
@@ -294,6 +342,13 @@ void MainWindow::ShowSettingsDialog() {
         return;
     }
 
+    if (elevated_) {
+        // The helper owns indexing while elevated (§7.7); it re-reads the
+        // INI itself on SIGHUP rather than the GUI diffing roots locally.
+        SendSignalToHelper(SIGHUP);
+        return;
+    }
+
     // §19: diff old vs new roots -> incremental IndexPaths/RemovePaths;
     // full rebuild when both sides changed.
     const RootsDiff diff = DiffRoots(oldRoots, result.selectedRoots);
@@ -310,6 +365,148 @@ void MainWindow::ShowSettingsDialog() {
     } else if (!diff.removed.empty()) {
         indexer_->RemovePaths(diff.removed);
         UpdateIdleStatus();
+    }
+}
+
+void MainWindow::ElevateForFullAccess() {
+    if (elevated_) {
+        return;  // one polkit prompt per session (§9.2)
+    }
+
+    StopLocalMonitoring();
+
+    helperProcess_ = new QProcess(this);
+    helperProcess_->start("pkexec", {"indexed-helper"});
+    if (!helperProcess_->waitForStarted(3000)) {
+        statusBar()->showMessage(
+            tr("Could not start indexed-helper (declined, or pkexec/indexed-helper not found)."),
+            8000);
+        helperProcess_->deleteLater();
+        helperProcess_ = nullptr;
+        StartLocalMonitoring();  // elevation failed; resume the unprivileged path
+        return;
+    }
+
+    elevated_ = true;
+    elevateAction_->setEnabled(false);
+    elevateAction_->setText(tr("Elevated (full-system access active)"));
+    statusBar()->showMessage(tr("Elevated: full-system indexing and monitoring active."), 5000);
+
+    // idxFilePath_ already exists (this GUI's own earlier unprivileged scan
+    // wrote it); indexed.status is new -- created only by the helper -- so
+    // its containing directory is watched too, to catch its first
+    // appearance (indexed-plan.md §9.3).
+    helperWatcher_ = new QFileSystemWatcher(this);
+    helperWatcher_->addPath(QString::fromStdString(idxFilePath_));
+    const QString statusDir =
+        QString::fromStdString(std::filesystem::path(statusFilePath_).parent_path().string());
+    helperWatcher_->addPath(statusDir);
+    connect(helperWatcher_, &QFileSystemWatcher::fileChanged, this,
+            &MainWindow::OnHelperFileChanged);
+    connect(helperWatcher_, &QFileSystemWatcher::directoryChanged, this, [this](const QString&) {
+        const QString statusQPath = QString::fromStdString(statusFilePath_);
+        if (QFileInfo::exists(statusQPath) && !helperWatcher_->files().contains(statusQPath)) {
+            helperWatcher_->addPath(statusQPath);
+        }
+        UpdateStatusFromHelperFile();
+    });
+}
+
+void MainWindow::SendSignalToHelper(int signal) {
+    if (helperProcess_ != nullptr && helperProcess_->state() == QProcess::Running) {
+        kill(static_cast<pid_t>(helperProcess_->processId()), signal);
+    }
+}
+
+void MainWindow::OnHelperFileChanged(const QString& path) {
+    if (path == QString::fromStdString(idxFilePath_)) {
+        ReloadIndexFromDisk();
+    } else if (path == QString::fromStdString(statusFilePath_)) {
+        UpdateStatusFromHelperFile();
+    }
+}
+
+void MainWindow::ReloadIndexFromDisk() {
+    const IndexSerializer::LoadResult result = IndexSerializer::Load(idxFilePath_);
+    if (!result.success) {
+        return;  // torn read mid-write by the helper; the next change retries
+    }
+    store_.LoadPool(result.pool, result.buildTimestampNs, result.lastMonitorStopNs);
+    lastBuildAgeSeconds_ = store_.GetIndexAgeSeconds(NowNs());
+    if (searchBox_->text().size() >= 2) {
+        coordinator_->SetQuery(searchBox_->text());  // refresh visible results
+    } else {
+        UpdateIdleStatus();
+    }
+}
+
+void MainWindow::UpdateStatusFromHelperFile() {
+    std::ifstream file(statusFilePath_, std::ios::binary);
+    if (!file.is_open()) {
+        return;
+    }
+    std::ostringstream contents;
+    contents << file.rdbuf();
+    const std::optional<IndexerStatus> status = ParseStatus(contents.str());
+    if (!status) {
+        return;  // torn read mid-write; the next change retries
+    }
+    if (status->state == IndexerState::WatchingForChanges || status->state == IndexerState::Idle) {
+        statusBar()->showMessage(QString::fromStdString(
+            IndexSummaryText(status->filesIndexed, status->locations, status->indexAgeSeconds)));
+    } else {
+        statusBar()->showMessage(QString::fromStdString(status->message));
+    }
+}
+
+void MainWindow::StartHotplugWatcher() {
+    hotplugStop_.store(false);
+    hotplugThread_ = std::thread([this]() {
+        const int fd = MountEnumerator::OpenMountInfoFd();
+        if (fd < 0) {
+            return;
+        }
+        std::vector<MountInfo> previous = mountEnumerator_.Enumerate();
+        while (!hotplugStop_.load()) {
+            if (!MountEnumerator::WaitForChange(fd, /*timeoutMs=*/500) || hotplugStop_.load()) {
+                continue;
+            }
+            std::vector<MountInfo> current = mountEnumerator_.Enumerate();
+            for (const MountInfo& mount : current) {
+                const bool existed = std::any_of(
+                    previous.begin(), previous.end(),
+                    [&](const MountInfo& p) { return p.mountPoint == mount.mountPoint; });
+                if (!existed) {
+                    const QString msg =
+                        tr("Filesystem %1 mounted — add it in Settings to index it.")
+                            .arg(QString::fromStdString(mount.mountPoint));
+                    QMetaObject::invokeMethod(
+                        this, [this, msg]() { statusBar()->showMessage(msg, 8000); },
+                        Qt::QueuedConnection);
+                }
+            }
+            for (const MountInfo& mount : previous) {
+                const bool stillMounted = std::any_of(
+                    current.begin(), current.end(),
+                    [&](const MountInfo& m) { return m.mountPoint == mount.mountPoint; });
+                if (!stillMounted) {
+                    const QString msg = tr("Filesystem %1 unmounted.")
+                                            .arg(QString::fromStdString(mount.mountPoint));
+                    QMetaObject::invokeMethod(
+                        this, [this, msg]() { statusBar()->showMessage(msg, 8000); },
+                        Qt::QueuedConnection);
+                }
+            }
+            previous = std::move(current);
+        }
+        ::close(fd);
+    });
+}
+
+void MainWindow::StopHotplugWatcher() {
+    hotplugStop_.store(true);
+    if (hotplugThread_.joinable()) {
+        hotplugThread_.join();
     }
 }
 

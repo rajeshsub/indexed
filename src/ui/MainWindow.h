@@ -1,9 +1,12 @@
 #pragma once
 
 #include <QAction>
+#include <QFileSystemWatcher>
 #include <QMainWindow>
+#include <QProcess>
 
 #include "indexer/Indexer.h"
+#include "platform/MountEnumerator.h"
 #include "search/ISearchEngine.h"
 #include "settings/Settings.h"
 #include "storage/IndexStore.h"
@@ -11,9 +14,11 @@
 #include "ui/ResultView.h"
 #include "ui/SearchCoordinator.h"
 #include "ui/SearchLineEdit.h"
+#include <atomic>
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace indexed {
 
@@ -36,6 +41,8 @@ public:
 
     // Kicks off StartIndexing on a background thread (load-if-fresh unless
     // force). Safe to call again after completion (Rebuild Index Now).
+    // Starts the GUI's own unprivileged InotifyWatcher-based monitoring on
+    // completion, unless an elevated helper is running (§7.2/§9).
     void StartIndexing(bool force);
 
 private:
@@ -53,14 +60,49 @@ private:
     ScanOptions CurrentScanOptions() const;
     void JoinIndexThread();
 
+    // Unprivileged live monitoring (default, no polkit prompt): InotifyWatcher
+    // per selected root, applied into store_ by the GUI's own Indexer.
+    void StartLocalMonitoring();
+    void StopLocalMonitoring();
+
+    // "Elevate for full-system access" (Index menu): launches
+    // `pkexec indexed-helper` (indexed-plan.md §9.2). Once elevated, the GUI
+    // stops scanning/monitoring itself and instead watches the helper's
+    // indexed.idx/indexed.status files for updates, per §7.7 -- Settings
+    // changes and Rebuild Index Now become SIGHUP/SIGUSR1 to the helper
+    // instead of local Indexer calls (§9.3).
+    void ElevateForFullAccess();
+    void SendSignalToHelper(int signal);
+    void OnHelperFileChanged(const QString& path);
+    void ReloadIndexFromDisk();
+    void UpdateStatusFromHelperFile();
+
+    // Hotplug (§7.6): polls MountEnumerator::WaitForChange on a background
+    // thread; on change, diffs the enumerated mount set and posts a
+    // transient status-bar notice for newly mounted/unmounted filesystems.
+    void StartHotplugWatcher();
+    void StopHotplugWatcher();
+
     Settings& settings_;
     IndexStore& store_;
     IFileSystemScanner& scanner_;
     std::string idxFilePath_;
     std::string logPath_;
+    std::string statusFilePath_;
 
     std::unique_ptr<Indexer> indexer_;
     std::thread indexThread_;
+
+    std::atomic<bool> localMonitorStop_{false};
+    std::thread localMonitorThread_;
+
+    QProcess* helperProcess_ = nullptr;
+    QFileSystemWatcher* helperWatcher_ = nullptr;
+    bool elevated_ = false;
+
+    MountEnumerator mountEnumerator_;
+    std::atomic<bool> hotplugStop_{false};
+    std::thread hotplugThread_;
 
     SearchLineEdit* searchBox_ = nullptr;
     ResultView* resultView_ = nullptr;
@@ -72,6 +114,7 @@ private:
     QAction* wholeWordAction_ = nullptr;
     QAction* matchPathAction_ = nullptr;
     QAction* diacriticsAction_ = nullptr;
+    QAction* elevateAction_ = nullptr;
 
     uint64_t lastBuildAgeSeconds_ = 0;
 };

@@ -754,7 +754,7 @@ Jobs (mirror winindex's structure):
 Each milestone should compile, pass tests, and be committed. TDD where practical.
 
 > **Progress tracker** (kept current as milestones land — check here before resuming
-> work in a fresh session): **M0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 onward: not started.**
+> work in a fresh session): **M0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 ✅ · M6 onward: not started.**
 > See `CLAUDE.md` for the workflow conventions (TDD discipline, subagent parallelization,
 > verification requirements) that apply to every remaining milestone.
 
@@ -776,12 +776,12 @@ Each milestone should compile, pass tests, and be committed. TDD where practical
    `ResultView` with Name/Path/Size/Date columns, sortable, status bar, menu bar, context
    menu), `SearchLineEdit` (Up/Down → list), open/reveal/copy/cut/trash/drag, First-Run &
    Settings dialogs, About. Wire to core. **Match the winindex screenshot layout** (§ below).
-6. **M5 — Live monitoring & privileged helper. ⬅ NEXT.** `InotifyWatcher` (unprivileged) first; then
+6. **M5 — Live monitoring & privileged helper. ✅ DONE.** `InotifyWatcher` (unprivileged) first; then
    `FanotifyMonitor` (privileged) + the `indexed-helper` binary + pkexec/polkit elevation
    (session-lifetime, §9.2) + `PKEXEC_UID`-based root-write hardening (`test_Elevation`).
    Signals/status-file control channel (§9.3). GUI reloads index on `.idx` change. Hotplug
    via mountinfo poll.
-7. **M6 — Packaging & polish.** AppImage build, AppStream metainfo, README + screenshot,
+7. **M6 — Packaging & polish. ⬅ NEXT.** AppImage build, AppStream metainfo, README + screenshot,
    CHANGELOG, ADRs finalized, release CI job, tag `v0.1.0`.
 
 ---
