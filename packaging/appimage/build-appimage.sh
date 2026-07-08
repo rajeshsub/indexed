@@ -34,6 +34,24 @@ fetch_tool linuxdeploy \
 fetch_tool linuxdeploy-plugin-qt \
     "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage"
 
+# linuxdeploy's bundled patchelf (0.15.0) predates RELR (.relr.dyn) sections
+# and silently corrupts every library it rewrites on distros built with a
+# modern binutils (same era of problem as the strip issue below) -- the
+# resulting AppImage segfaults in random library constructors at startup.
+# Fetch a RELR-aware patchelf and point linuxdeploy at it via $PATCHELF.
+# (0.18.0 still corrupts RELR libs; 0.19.1 is the first release verified to
+# produce loadable output on Fedora 44 -- keep this pinned >= 0.19.1.)
+PATCHELF_VERSION=0.19.1
+if [[ ! -x "$TOOLS_DIR/patchelf" ]]; then
+    echo "Fetching patchelf $PATCHELF_VERSION..."
+    curl -fL --retry 3 -o "$TOOLS_DIR/patchelf.tar.gz" \
+        "https://github.com/NixOS/patchelf/releases/download/$PATCHELF_VERSION/patchelf-$PATCHELF_VERSION-x86_64.tar.gz"
+    tar -xzf "$TOOLS_DIR/patchelf.tar.gz" -C "$TOOLS_DIR" --strip-components=2 ./bin/patchelf
+    rm -f "$TOOLS_DIR/patchelf.tar.gz"
+    chmod +x "$TOOLS_DIR/patchelf"
+fi
+export PATCHELF="$TOOLS_DIR/patchelf"
+
 if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
     cmake --preset linux-gcc-release
 fi

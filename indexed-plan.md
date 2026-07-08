@@ -754,7 +754,8 @@ Jobs (mirror winindex's structure):
 Each milestone should compile, pass tests, and be committed. TDD where practical.
 
 > **Progress tracker** (kept current as milestones land — check here before resuming
-> work in a fresh session): **M0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 ✅ · M6 onward: not started.**
+> work in a fresh session): **M0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 ✅ · M6 ✅ (pending:
+> README screenshot, developer tags `v0.1.0` + pushes).**
 > See `CLAUDE.md` for the workflow conventions (TDD discipline, subagent parallelization,
 > verification requirements) that apply to every remaining milestone.
 
@@ -781,25 +782,20 @@ Each milestone should compile, pass tests, and be committed. TDD where practical
    (session-lifetime, §9.2) + `PKEXEC_UID`-based root-write hardening (`test_Elevation`).
    Signals/status-file control channel (§9.3). GUI reloads index on `.idx` change. Hotplug
    via mountinfo poll.
-7. **M6 — Packaging & polish. ⬅ NEXT.** AppImage build, AppStream metainfo, README + screenshot,
-   CHANGELOG, ADRs finalized, release CI job, tag `v0.1.0`.
+7. **M6 — Packaging & polish. ✅ DONE** (except the two developer-action items below).
+   AppImage build, AppStream metainfo, README, CHANGELOG, ADRs finalized, release CI job.
 
-   > **M6 handoff notes (2026-07-07):** repo hygiene files (LICENSE/README/CHANGELOG/ADRs/
-   > `.clang-format`/etc.) and `.github/workflows/ci.yml` already exist from M0 but are stale
-   > placeholders — README says "M0 scaffold" and has no Settings/Shortcuts/Releases sections
-   > or screenshot; CHANGELOG has no M1-M5 entries; CI has `lint`/`build-debug`/`build-release`/
-   > `build-asan` jobs but is **missing the `release` job** (AppImage-on-tag, §14.3 item 5).
-   > `packaging/appimage/` and `packaging/icons/` don't exist yet — new for M6.
-   > `packaging/polkit/org.indexed.helper.policy` already exists (M5) and is wired into
-   > `src/helper/CMakeLists.txt`'s install rule.
-   > Also note the `build-asan` CI job has a stale test exclusion
-   > (`ctest -E "MountEnumerator|Indexer"`) with a comment "re-enable once M3 lands with proper
-   > mocks" — M3-M5 have since landed; revisit whether that exclusion is still needed.
-   > Dev-sandbox tooling check (may differ in CI): ImageMagick (`convert`/`magick`) available
-   > for icon rasterization; no `rsvg-convert`/`inkscape`/`linuxdeploy` installed, but network
-   > access works, so `linuxdeploy` can be fetched at build time the way the real AppImage
-   > build (and CI) will — the sandbox just can't fully dry-run the AppImage build itself.
-   > Tagging `v0.1.0` is a git action requiring the developer's go-ahead, not done unilaterally.
+   > **M6 completion notes (2026-07-09):** packaging tree (`appimage/`, `icons/` incl. hicolor
+   > sizes, `metainfo/`, `indexed.desktop`), rewritten README, CHANGELOG entries, and the CI
+   > `release` job (AppImage-on-tag) all landed. `desktop-file-validate` and
+   > `appstreamcli validate` both pass. The AppImage builds and runs verified on this machine —
+   > note `build-appimage.sh` **must** fetch patchelf ≥ 0.19.1 (pinned in the script): both
+   > linuxdeploy's bundled 0.15.0 *and* 0.18.0 silently corrupt every RELR-relocated library
+   > (Fedora 40+/Ubuntu 24.04+ system libs), producing an AppImage that segfaults in random
+   > library constructors at startup. The stale `build-asan` ctest exclusion was removed.
+   > Still pending (developer actions): README screenshot (needs a real GUI session), and
+   > tagging `v0.1.0` + pushing — tagging is a git action requiring the developer's go-ahead,
+   > not done unilaterally. Second-distro validation (Ubuntu, §20) still outstanding.
 
 ---
 

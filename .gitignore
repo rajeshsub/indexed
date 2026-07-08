@@ -2,9 +2,11 @@ build/
 .venv/
 .cache/
 .claude/
+CLAUDE.md
 CMakeUserPresets.json
 *.user
 out/
+ignore.txt
 install/
 *.idx
 *.log

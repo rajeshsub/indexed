@@ -5,6 +5,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Crash on first launch: `IndexStore::AddEntry` was called concurrently by
+  `WalkScanner`'s worker threads without a lock, corrupting the staging pool's
+  heap ("double free or corruption"). It now takes the same exclusive lock as
+  every other store mutator.
+- Adding a root in Settings now behaves like a real reindex: it shows
+  "Indexing…" and disables search while scanning, honors excluded folders,
+  persists the updated index to disk (previously a restart within the reindex
+  interval silently resurrected the pre-change index), and restarts live
+  monitoring so the new root is watched.
+- Clearing the search box (or backspacing below 2 characters) now clears the
+  result list instead of leaving the previous query's results on screen; a
+  search still in flight when the box is cleared can no longer repopulate it.
+- Token-set search now matches per-token substrings, not exact tokens:
+  `just rosy guit` keeps matching `LedZep_Just-Rosy_June-Bug_guitar.flac`
+  while the last word is still being typed (search-as-you-type parity with
+  winindex's documented behavior). Query tokens still never match across a
+  separator.
+- AppImage no longer segfaults at startup on distros built with RELR
+  relocations (Fedora 40+, Ubuntu 24.04+): linuxdeploy's bundled patchelf
+  0.15.0 silently corrupted every bundled library; the build script now
+  fetches patchelf 0.19.1 and points linuxdeploy at it via `$PATCHELF`.
+- `packaging/indexed.desktop` no longer lists two main XDG menu categories.
+
 ### Added
 - Packaging: AppStream metainfo, app icon set (`packaging/icons/`), AppImage build
   script (`packaging/appimage/build-appimage.sh`, linuxdeploy + linuxdeploy-plugin-qt),

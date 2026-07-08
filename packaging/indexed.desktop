@@ -5,5 +5,5 @@ Comment=Blazing-fast Linux file search
 Exec=indexed
 Icon=indexed
 Terminal=false
-Categories=Utility;System;FileTools;
+Categories=Utility;FileTools;
 Keywords=search;find;file;index;
