@@ -2,6 +2,7 @@
 
 #include <QAction>
 #include <QFileSystemWatcher>
+#include <QLabel>
 #include <QMainWindow>
 #include <QProcess>
 
@@ -56,6 +57,7 @@ private:
     void ShowSettingsDialog();
     void ShowAbout();
     void UpdateIdleStatus();
+    void UpdateSearchOptionsLabel();
     void SetSearchUiEnabled(bool enabled);
     ScanOptions CurrentScanOptions() const;
     void JoinIndexThread();
@@ -115,6 +117,17 @@ private:
     QAction* matchPathAction_ = nullptr;
     QAction* diacriticsAction_ = nullptr;
     QAction* elevateAction_ = nullptr;
+
+    // Permanent status-bar widgets (indexed-plan.md §19 follow-up): unlike
+    // statusBar()->showMessage()'s transient message slot -- which search
+    // results, indexing progress, and hotplug notices all share and
+    // overwrite each other in -- these two are never hidden or replaced by a
+    // transient message, so the index summary survives a search instead of
+    // being clobbered by the result count. indexStatusLabel_ sits left of
+    // searchOptionsLabel_ (added first: QStatusBar packs permanent widgets
+    // left-to-right in addPermanentWidget() call order).
+    QLabel* indexStatusLabel_ = nullptr;
+    QLabel* searchOptionsLabel_ = nullptr;
 
     uint64_t lastBuildAgeSeconds_ = 0;
 };

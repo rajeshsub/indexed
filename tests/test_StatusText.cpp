@@ -5,6 +5,8 @@
 
 using indexed::IndexSummaryText;
 using indexed::ResultCountText;
+using indexed::SearchOptions;
+using indexed::SearchOptionsText;
 
 TEST(StatusText, ResultCountFormatsWithThousandsSeparators) {
     EXPECT_EQ(ResultCountText(384, false), "384 result(s)");
@@ -28,4 +30,47 @@ TEST(StatusText, IndexSummaryWithNoLocations) {
     const std::string summary = IndexSummaryText(0, {}, 0);
     EXPECT_EQ(summary, indexed::FormatFileCount(0) + " files | " + indexed::FormatLocationList({}) +
                            " | " + indexed::FormatAge(0));
+}
+
+TEST(StatusText, SearchOptionsTextAllOffByDefault) {
+    EXPECT_EQ(SearchOptionsText(SearchOptions{}),
+              "Regex: OFF | Case: OFF | Whole Word: OFF | Match Path: OFF | Diacritics: OFF");
+}
+
+TEST(StatusText, SearchOptionsTextReflectsEachToggleIndependently) {
+    SearchOptions options;
+    options.useRegex = true;
+    EXPECT_EQ(SearchOptionsText(options),
+              "Regex: ON | Case: OFF | Whole Word: OFF | Match Path: OFF | Diacritics: OFF");
+
+    options = SearchOptions{};
+    options.caseSensitive = true;
+    EXPECT_EQ(SearchOptionsText(options),
+              "Regex: OFF | Case: ON | Whole Word: OFF | Match Path: OFF | Diacritics: OFF");
+
+    options = SearchOptions{};
+    options.wholeWord = true;
+    EXPECT_EQ(SearchOptionsText(options),
+              "Regex: OFF | Case: OFF | Whole Word: ON | Match Path: OFF | Diacritics: OFF");
+
+    options = SearchOptions{};
+    options.matchPath = true;
+    EXPECT_EQ(SearchOptionsText(options),
+              "Regex: OFF | Case: OFF | Whole Word: OFF | Match Path: ON | Diacritics: OFF");
+
+    options = SearchOptions{};
+    options.ignoreDiacritics = true;
+    EXPECT_EQ(SearchOptionsText(options),
+              "Regex: OFF | Case: OFF | Whole Word: OFF | Match Path: OFF | Diacritics: ON");
+}
+
+TEST(StatusText, SearchOptionsTextAllOnTogether) {
+    SearchOptions options;
+    options.useRegex = true;
+    options.caseSensitive = true;
+    options.wholeWord = true;
+    options.matchPath = true;
+    options.ignoreDiacritics = true;
+    EXPECT_EQ(SearchOptionsText(options),
+              "Regex: ON | Case: ON | Whole Word: ON | Match Path: ON | Diacritics: ON");
 }

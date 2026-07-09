@@ -83,12 +83,21 @@ MainWindow::MainWindow(Settings& settings, IndexStore& store, ISearchEngine& eng
     setCentralWidget(central);
     statusBar()->showMessage("Ready.");
 
+    // Permanent widgets: never hidden/overwritten by a transient
+    // showMessage() (unlike the result count, indexing progress, and
+    // hotplug notices, which all share that transient slot).
+    indexStatusLabel_ = new QLabel(tr("No index yet."), this);
+    statusBar()->addPermanentWidget(indexStatusLabel_);
+    searchOptionsLabel_ = new QLabel(this);
+    statusBar()->addPermanentWidget(searchOptionsLabel_);
+
     // SearchLineEdit owns the 150 ms debounce + 2-char gate, so the
     // coordinator's own debounce is set to zero -- double-debouncing would
     // just add latency.
     coordinator_ = new SearchCoordinator(engine, store_, /*debounceMs=*/0, this);
 
-    BuildMenus();
+    BuildMenus();  // creates regexAction_ etc. -- must run before the label read below
+    UpdateSearchOptionsLabel();
     WireSearch();
     WireResultActions();
 
@@ -127,6 +136,7 @@ void MainWindow::BuildMenus() {
             options.matchPath = matchPathAction_->isChecked();
             options.ignoreDiacritics = diacriticsAction_->isChecked();
             coordinator_->SetOptions(options);
+            UpdateSearchOptionsLabel();
             // Re-run the current query under the new options.
             if (searchBox_->text().size() >= 2) {
                 coordinator_->SetQuery(searchBox_->text());
@@ -282,8 +292,18 @@ void MainWindow::SetSearchUiEnabled(bool enabled) {
 }
 
 void MainWindow::UpdateIdleStatus() {
-    statusBar()->showMessage(QString::fromStdString(IndexSummaryText(
+    indexStatusLabel_->setText(QString::fromStdString(IndexSummaryText(
         store_.GetPool().Count(), settings_.SelectedRoots(), lastBuildAgeSeconds_)));
+}
+
+void MainWindow::UpdateSearchOptionsLabel() {
+    SearchOptions options;
+    options.useRegex = regexAction_->isChecked();
+    options.caseSensitive = caseAction_->isChecked();
+    options.wholeWord = wholeWordAction_->isChecked();
+    options.matchPath = matchPathAction_->isChecked();
+    options.ignoreDiacritics = diacriticsAction_->isChecked();
+    searchOptionsLabel_->setText(QString::fromStdString(SearchOptionsText(options)));
 }
 
 void MainWindow::StartIndexing(bool force) {
@@ -481,7 +501,7 @@ void MainWindow::UpdateStatusFromHelperFile() {
         return;  // torn read mid-write; the next change retries
     }
     if (status->state == IndexerState::WatchingForChanges || status->state == IndexerState::Idle) {
-        statusBar()->showMessage(QString::fromStdString(
+        indexStatusLabel_->setText(QString::fromStdString(
             IndexSummaryText(status->filesIndexed, status->locations, status->indexAgeSeconds)));
     } else {
         statusBar()->showMessage(QString::fromStdString(status->message));

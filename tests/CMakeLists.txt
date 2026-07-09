@@ -34,6 +34,17 @@ target_link_libraries(indexed_tests
 
 indexed_enable_warnings(indexed_tests)
 
+# GCC 16 (verified: false positive is absent under -O0/debug, only appears at
+# -O2/-O3) misattributes a heap-vector temporary's destructor inside WaitFor's
+# inlined lambda predicates as freeing a non-heap pointer with a nonzero
+# offset -- there is no double free/corruption here (ASAN and the debug
+# build are both clean); this is GCC bug-tracker territory, not our code.
+# Narrowly downgraded to non-fatal for this one file rather than -Werror'd
+# project-wide, per CLAUDE.md's false-positive suppression policy.
+set_source_files_properties(test_InotifyWatcher.cpp PROPERTIES
+    COMPILE_OPTIONS "-Wno-error=free-nonheap-object"
+)
+
 include(GoogleTest)
 gtest_discover_tests(indexed_tests DISCOVERY_TIMEOUT 30)
 

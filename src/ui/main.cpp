@@ -30,6 +30,20 @@ std::string HomeDir() {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    // Qt's GNOME platform theme plugin probes xdg-desktop-portal over D-Bus
+    // for dark-mode/font settings during QApplication's constructor. On any
+    // system where that portal is absent or misconfigured (common outside a
+    // full GNOME session -- XFCE, minimal installs, sandboxes) it fails and
+    // logs a "Could not activate remote peer" warning; the failure is
+    // harmless and already handled gracefully (indexed just doesn't get
+    // portal-sourced theming), so silence only this one log category rather
+    // than leaving users to wonder if something broke. Additive: an
+    // operator-supplied QT_LOGGING_RULES is preserved, not clobbered.
+    const QByteArray existingLoggingRules = qgetenv("QT_LOGGING_RULES");
+    qputenv("QT_LOGGING_RULES", existingLoggingRules.isEmpty()
+                                    ? QByteArray("qt.qpa.theme.gnome.warning=false")
+                                    : existingLoggingRules + ";qt.qpa.theme.gnome.warning=false");
+
     QApplication app(argc, argv);
 
     const indexed::DataDirs dirs = indexed::ResolveDataDirs();

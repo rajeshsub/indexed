@@ -18,4 +18,17 @@ std::string IndexSummaryText(uint64_t fileCount, const std::vector<std::string>&
            FormatAge(ageSeconds);
 }
 
+namespace {
+std::string OnOff(bool value) {
+    return value ? "ON" : "OFF";
+}
+}  // namespace
+
+std::string SearchOptionsText(const SearchOptions& options) {
+    return "Regex: " + OnOff(options.useRegex) + " | Case: " + OnOff(options.caseSensitive) +
+           " | Whole Word: " + OnOff(options.wholeWord) +
+           " | Match Path: " + OnOff(options.matchPath) +
+           " | Diacritics: " + OnOff(options.ignoreDiacritics);
+}
+
 }  // namespace indexed

@@ -10,6 +10,8 @@ millions of files. It is a feature-for-feature Linux port of
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![CI](https://github.com/rajeshsub/indexed/actions/workflows/ci.yml/badge.svg)
 
+![indexed regex search](src/assets/2.png)
+
 ---
 
 ## Features
@@ -126,6 +128,14 @@ installer exists, copy it once manually:
 sudo cp squashfs-root/usr/share/polkit-1/actions/org.indexed.helper.policy /usr/share/polkit-1/actions/
 rm -rf squashfs-root
 ```
+
+---
+
+## Screenshots
+
+| Substring search | Regex search | Settings |
+|---|---|---|
+| ![Substring search](src/assets/1.png) | ![Regex search](src/assets/2.png) | ![Settings dialog](src/assets/3.png) |
 
 ---
 
