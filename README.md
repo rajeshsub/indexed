@@ -10,11 +10,6 @@ millions of files. It is a feature-for-feature Linux port of
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![CI](https://github.com/rajeshsub/indexed/actions/workflows/ci.yml/badge.svg)
 
-**Status: feature-complete, pre-release (M6 packaging/polish).** All milestones through
-live monitoring are done (M0–M5); see [`indexed-plan.md`](indexed-plan.md) for the full
-implementation plan, milestone tracker, and `docs/adr/` for the structural decisions
-behind the design.
-
 ---
 
 ## Features
