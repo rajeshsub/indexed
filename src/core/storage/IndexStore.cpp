@@ -9,7 +9,7 @@ namespace {
 
 // True when `path` is pathPrefix itself or a true descendant of it
 // (pathPrefix + "/" + anything). A bare prefix match ("/home/user2..."
-// against "/home/user") must NOT count — that's a sibling directory, not a
+// against "/home/user") must NOT count -- that's a sibling directory, not a
 // descendant.
 bool IsUnderPath(std::string_view path, std::string_view pathPrefix) {
     if (path == pathPrefix) {

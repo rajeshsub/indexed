@@ -180,11 +180,14 @@ int main() {
         return 1;
     }
 
-    Logger logger(logGuard.FdPath());
-    logger.Log("indexed-helper starting, target user " + targetUser->username);
-
     Settings settings(dirs.configPath, targetUser->homeDir);
     settings.Load();
+
+    Logger logger(logGuard.FdPath(), settings.LogLevel());
+    // Process start: a security-relevant state change for a root-running
+    // process, logged at Warning so it survives the default threshold
+    // (docs/adr/0009) rather than only appearing in verbose mode.
+    logger.Log("indexed-helper starting, target user " + targetUser->username, LogLevel::Warning);
 
     WalkScanner scanner;
     IndexStore store;
@@ -248,7 +251,8 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
-    logger.Log("SIGTERM received, stopping monitoring and exiting");
+    // Process stop: matches the Warning-level start line above.
+    logger.Log("SIGTERM received, stopping monitoring and exiting", LogLevel::Warning);
     monitorStop.store(true);
     monitorThread.join();
 

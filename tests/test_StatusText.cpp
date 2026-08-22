@@ -16,7 +16,7 @@ TEST(StatusText, ResultCountFormatsWithThousandsSeparators) {
 
 TEST(StatusText, CappedResultCountAppendsRefineMessage) {
     EXPECT_EQ(ResultCountText(10000, true),
-              "10,000 result(s) \xE2\x80\x94 showing first 10,000. Refine your search\xE2\x80\xA6");
+              "10,000 result(s) -- showing first 10,000. Refine your search\xE2\x80\xA6");
 }
 
 TEST(StatusText, IndexSummaryJoinsCountLocationsAndAge) {

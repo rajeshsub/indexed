@@ -46,7 +46,7 @@ struct RootsDiff {
 RootsDiff DiffRoots(const std::vector<std::string>& oldRoots,
                     const std::vector<std::string>& newRoots);
 
-// "indexed — Settings" (indexed-plan.md §19): editing counterpart to
+// "indexed -- Settings" (indexed-plan.md §19): editing counterpart to
 // FirstRunDialog. Paths-to-index list + Add Location…/Remove, the same
 // Automatic Reindex group (manual-only checkbox + interval spinbox +
 // Hours/Days combo), Excluded folders list + Add…/Remove, OK/Cancel.

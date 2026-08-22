@@ -47,7 +47,7 @@ TEST(IndexStore, GetPoolUnchangedUntilEndWriteCalled) {
 
     ASSERT_EQ(store.GetPool().Count(), 1u);
 
-    // Start a second generation but do not call EndWrite yet — readers must
+    // Start a second generation but do not call EndWrite yet -- readers must
     // still see the first generation's pool.
     store.BeginWrite();
     store.AddEntry(MakeEntry("c.txt", "/home/user/c.txt"));

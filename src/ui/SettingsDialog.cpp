@@ -63,7 +63,7 @@ SettingsDialog::SettingsDialog(SettingsDialogInitialState initial, QWidget* pare
 }
 
 void SettingsDialog::BuildUi() {
-    setWindowTitle(QStringLiteral("indexed — Settings"));
+    setWindowTitle(QStringLiteral("indexed -- Settings"));
 
     auto* mainLayout = new QVBoxLayout(this);
 

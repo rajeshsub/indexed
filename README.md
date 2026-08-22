@@ -9,6 +9,7 @@ millions of files. It is a feature-for-feature Linux port of
 ![Language](https://img.shields.io/badge/language-C%2B%2B20-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![CI](https://github.com/rajeshsub/indexed/actions/workflows/ci.yml/badge.svg)
+[![Dependency Scan](https://github.com/rajeshsub/indexed/actions/workflows/dependency-scan.yml/badge.svg)](https://github.com/rajeshsub/indexed/actions/workflows/dependency-scan.yml)
 
 ![indexed regex search](src/assets/2.png)
 
@@ -16,28 +17,28 @@ millions of files. It is a feature-for-feature Linux port of
 
 ## Features
 
-- **Instant search** — results appear as you type, debounced at 150 ms
-- **Parallel directory-walk scanning** — a `getdents64` + `statx` walker, parallelized
+- **Instant search** -- results appear as you type, debounced at 150 ms
+- **Parallel directory-walk scanning** -- a `getdents64` + `statx` walker, parallelized
   across a thread pool (no raw on-disk filesystem structure to shortcut through on Linux
-  — see `docs/adr/0002-directory-walk-scanning-strategy.md`)
-- **Live monitoring** — fanotify whole-mount monitoring via a privileged helper, with an
+  -- see `docs/adr/0002-directory-walk-scanning-strategy.md`)
+- **Live monitoring** -- fanotify whole-mount monitoring via a privileged helper, with an
   inotify fallback when unprivileged
-- **Regex support** — powered by [RE2](https://github.com/google/re2); toggle with Alt+1
-- **SIMD-accelerated substring search** — AVX2/SSE4.2 on x86-64 with runtime dispatch;
+- **Regex support** -- powered by [RE2](https://github.com/google/re2); toggle with Alt+1
+- **SIMD-accelerated substring search** -- AVX2/SSE4.2 on x86-64 with runtime dispatch;
   scalar on aarch64 in v0.1.0
-- **Word-level matching** — queries with spaces, underscores, or hyphens match filenames
+- **Word-level matching** -- queries with spaces, underscores, or hyphens match filenames
   by token set, so `just rosy guitar` finds `LedZep_Just-Rosy_June-Bug_guitar.flac`
-- **Search modes** — case-sensitive, whole-word, match full path, ignore diacritics
-- **Portable mode** — place an `indexed.conf` next to the executable and all data stays
+- **Search modes** -- case-sensitive, whole-word, match full path, ignore diacritics
+- **Portable mode** -- place an `indexed.conf` next to the executable and all data stays
   in that directory
-- **Persistent index** — serialized to disk (CRC-32 validated) and loaded on startup;
+- **Persistent index** -- serialized to disk (CRC-32 validated) and loaded on startup;
   only rebuilt when stale, corrupt, or missing
-- **Context menu** — open file, open containing folder, copy full path, copy filename,
+- **Context menu** -- open file, open containing folder, copy full path, copy filename,
   cut (move), delete (to Trash), drag-and-drop out to file managers
-- **Smart exclusions** — pseudo-filesystems, container storage, and Flatpak data are
+- **Smart exclusions** -- pseudo-filesystems, container storage, and Flatpak data are
   excluded by default; fully user-configurable
 
-`indexed` is **GUI-only** — there is no CLI query mode (a deliberate scope decision; see
+`indexed` is **GUI-only** -- there is no CLI query mode (a deliberate scope decision; see
 the Decisions Log in `indexed-plan.md` §18).
 
 ---
@@ -61,7 +62,7 @@ the Decisions Log in `indexed-plan.md` §18).
 ```
 
 The indexer/monitor runs in a separate privileged process (`indexed-helper`, elevated via
-`pkexec` for the lifetime of the GUI session — see
+`pkexec` for the lifetime of the GUI session -- see
 `docs/adr/0008-privileged-helper-and-elevation.md`); the GUI itself never runs as root and
 only loads/searches the on-disk index in-process.
 
@@ -79,7 +80,17 @@ chmod +x indexed-x86_64.AppImage
 
 The AppImage bundles Qt; no system Qt install is required to run it. The first action
 that needs full-filesystem monitoring (fanotify) prompts once via `pkexec`/polkit for
-the lifetime of the GUI session — see "Privileged monitoring" below.
+the lifetime of the GUI session -- see "Privileged monitoring" below.
+
+Each release also publishes a `SHA256SUMS` file. Verify the download before running it:
+
+```bash
+sha256sum -c SHA256SUMS
+```
+
+Git tags are not currently GPG-signed (docs/adr/0010-release-integrity-verification.md);
+the checksum above confirms the download matches what CI built and published for that
+tag, not that the tag itself was signed by the maintainer.
 
 ---
 
@@ -87,11 +98,11 @@ the lifetime of the GUI session — see "Privileged monitoring" below.
 
 Available from the menu bar (First-Run dialog shows the same fields on first launch):
 
-- **Paths to index** — add/remove the mounts or directories indexed
-- **Automatic Reindex** — "Manual only", or an interval in hours/days
-- **Excluded folders** — pseudo-filesystems, container storage, and Flatpak data are
+- **Paths to index** -- add/remove the mounts or directories indexed
+- **Automatic Reindex** -- "Manual only", or an interval in hours/days
+- **Excluded folders** -- pseudo-filesystems, container storage, and Flatpak data are
   excluded by default; add/remove your own
-- **Portable mode** — place an `indexed.conf` next to the executable to keep all data
+- **Portable mode** -- place an `indexed.conf` next to the executable to keep all data
   (index, settings, logs) in that directory instead of `$XDG_*`
 
 ## Shortcuts
@@ -118,7 +129,7 @@ requests that once per GUI session via `pkexec` (see
 works fully, falling back to unprivileged `inotify` watches per indexed root.
 
 The polkit policy (`packaging/polkit/org.indexed.helper.policy`) must be registered on
-the system for the `pkexec` prompt to appear — `cmake --install` places it under
+the system for the `pkexec` prompt to appear -- `cmake --install` places it under
 `share/polkit-1/actions` on distro-style installs. **The AppImage does not do this
 automatically** (AppImages are installer-free by design); until a proper first-run
 installer exists, copy it once manually:
@@ -152,7 +163,7 @@ rm -rf squashfs-root
 | Git | any recent |
 
 Third-party dependencies (**re2**, **abseil**, **utf8proc**, **GoogleTest**) are fetched
-automatically by CMake's `FetchContent` — no manual installation needed.
+automatically by CMake's `FetchContent` -- no manual installation needed.
 
 ### Quick build
 
@@ -173,6 +184,20 @@ cmake --build --preset linux-gcc-release
 ```bash
 ./build.sh test
 ```
+
+### Running benchmarks
+
+Off by default (`docs/adr/0011-benchmark-tooling.md`); build with
+`-DBUILD_BENCHMARKS=ON` to enable:
+
+```bash
+cmake --preset linux-gcc-release -DBUILD_BENCHMARKS=ON
+cmake --build --preset linux-gcc-release --target bench_SearchEngine bench_WalkScanner
+./build/release/benchmarks/bench_SearchEngine
+./build/release/benchmarks/bench_WalkScanner
+```
+
+CI tracks both, plus test-suite duration, as trend charts on every push to `main`.
 
 ### Building the AppImage
 
@@ -195,12 +220,15 @@ indexed/
     ui/         Qt MainWindow, search bar, result view
     helper/     privileged indexer + fanotify monitor entry point
   tests/        GoogleTest/GoogleMock unit tests
+  benchmarks/   Google Benchmark perf tests (opt-in, -DBUILD_BENCHMARKS=ON)
   docs/adr/     Architecture Decision Records
+  docs/architecture.md   Current system shape (components, data flow, runtime flows)
   packaging/
     indexed.desktop, icons/, metainfo/  desktop integration + AppStream metadata
     polkit/       polkit policy for indexed-helper elevation
     appimage/     build-appimage.sh, AppImage output (gitignored)
-  .github/workflows/  CI: lint, build+test, ASAN, coverage, release (AppImage on tag)
+  .github/workflows/  CI: lint, build+test, ASAN, coverage, benchmarks, dependency
+                      scan, release (AppImage on tag)
   CMakeLists.txt
   CMakePresets.json
   build.sh      Convenience wrapper: build.sh [debug|release|asan|test|all|clean]
@@ -212,6 +240,7 @@ indexed/
 ## Development setup
 
 ```bash
+sudo apt-get install -y cppcheck=2.13.0-2ubuntu3  # pin matches .github/workflows/ci.yml
 pip install pre-commit
 pre-commit install
 pre-commit install --hook-type pre-push
@@ -219,7 +248,10 @@ pre-commit install --hook-type pre-push
 
 `pre-commit install` wires commit-time checks (clang-format, cppcheck).
 `pre-commit install --hook-type pre-push` wires the pre-push gate that builds and runs
-the full test suite before a push.
+the full test suite before a push. `cppcheck` itself is a system dependency the
+pre-commit hook shells out to (unlike clang-format, which pre-commit installs and pins
+itself in `.pre-commit-config.yaml`) -- install the exact version above so local runs
+match CI (rule 4 in the engineering-standards this repo follows).
 
 To run all checks on the full codebase (one-time cleanup):
 

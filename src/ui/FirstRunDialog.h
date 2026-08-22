@@ -24,7 +24,7 @@ struct FirstRunResult {
     std::vector<std::string> excludedPaths;
 };
 
-// "indexed — First Run Setup" (indexed-plan.md §19): multi-select mount
+// "indexed -- First Run Setup" (indexed-plan.md §19): multi-select mount
 // list, Automatic Reindex group (Manual only / interval+unit), Excluded
 // folders list with Add.../Remove.
 //

@@ -13,17 +13,19 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.x'
 
       # cppcheck is a system dependency the pocc/pre-commit-hooks cppcheck hook shells
       # out to; clang-format itself is pinned in .pre-commit-config.yaml, not installed
       # here, so there is exactly one place that version is declared (rule 4).
+      # Pinned exact apt version -- keep this in sync with the "Development setup"
+      # section of README.md, which is the only other place this version is named.
       - name: Install system dependencies for pre-commit hooks
-        run: sudo apt-get update && sudo apt-get install -y cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck=2.13.0-2ubuntu3
 
       - name: Install pre-commit
         run: pip install pre-commit
@@ -31,13 +33,27 @@ jobs:
       - name: Run pre-commit hooks (matches local `pre-commit run --all-files`)
         run: pre-commit run --all-files --show-diff-on-failure
 
+  dependency-scan:
+    permissions:
+      contents: read
+      security-events: write
+      actions: read  # osv-scanner-reusable-pr.yml's SARIF upload step needs this
+    # Scans for known-vulnerable dependencies (rule 18). Coverage note: OSV-Scanner
+    # recognizes lockfile formats (package-lock.json, requirements.txt, Cargo.lock,
+    # etc.); indexed's core/ dependencies are pinned via CMake FetchContent GIT_TAG
+    # (docs/adr/0004), which has no such manifest, so this scan currently has nothing
+    # C++-side to check against. Kept wired so it starts covering automatically if a
+    # scanned-ecosystem manifest is ever added, and so Python tooling deps
+    # (pre-commit's own resolved versions) stay covered.
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@6e4298ebc4db23e847df9b2e2de2939d6f066c67 # v2.5.1
+
   build-debug:
     needs: lint
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install build dependencies
         run: |
@@ -45,7 +61,7 @@ jobs:
           sudo apt-get install -y cmake build-essential qt6-base-dev libgl1-mesa-dev libblkid-dev libudev-dev
 
       - name: Cache FetchContent dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: build/debug/_deps
           key: fetchcontent-debug-${{ hashFiles('CMakeLists.txt') }}
@@ -59,7 +75,41 @@ jobs:
 
       - name: Run Tests
         working-directory: build/debug
-        run: ctest --output-on-failure
+        run: ctest --output-on-failure --output-junit ctest-results.xml
+
+      # Test-suite wall-clock duration, tracked over time (rule 25). JUnit's
+      # root <testsuite time="..."> is CTest's own aggregate timing -- no
+      # hand-rolled stopwatching.
+      - name: Convert test-suite timing to benchmark JSON
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p benchmark-results
+          python3 -c "
+          import xml.etree.ElementTree as ET, json
+          root = ET.parse('build/debug/ctest-results.xml').getroot()
+          seconds = float(root.get('time', root.find('.//testsuite').get('time') if root.find('.//testsuite') is not None else 0))
+          json.dump([{'name': 'Test suite duration', 'unit': 's', 'value': seconds}],
+                     open('benchmark-results/test-suite-timing.json', 'w'))
+          "
+
+      - name: Cache test-suite timing history
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ./benchmark-history
+          key: benchmark-history-testsuite-${{ github.run_id }}
+          restore-keys: benchmark-history-testsuite-
+
+      - name: Track test-suite duration trend
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        with:
+          name: Test Suite Duration
+          tool: customSmallerIsBetter
+          output-file-path: benchmark-results/test-suite-timing.json
+          external-data-json-path: ./benchmark-history/test-suite.json
+          summary-always: true
+          fail-on-alert: false
 
   build-release:
     needs: lint
@@ -67,7 +117,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install build dependencies
         run: |
@@ -75,7 +125,7 @@ jobs:
           sudo apt-get install -y cmake build-essential qt6-base-dev libgl1-mesa-dev libblkid-dev libudev-dev lcov
 
       - name: Cache FetchContent dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: build/release/_deps
           key: fetchcontent-release-${{ hashFiles('CMakeLists.txt') }}
@@ -97,18 +147,21 @@ jobs:
           lcov --remove coverage.info '*/_deps/*' '/usr/*' --output-file coverage.info
 
       - name: Upload Coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
         with:
           files: coverage.info
           fail_ci_if_error: false
 
-  build-asan:
+  benchmarks:
     needs: lint
+    # Trend-tracking only makes sense against main's history; PR branches
+    # would pollute the cached series with throwaway data (docs/adr/0011).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install build dependencies
         run: |
@@ -116,7 +169,68 @@ jobs:
           sudo apt-get install -y cmake build-essential qt6-base-dev libgl1-mesa-dev libblkid-dev libudev-dev
 
       - name: Cache FetchContent dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: build/release/_deps
+          key: fetchcontent-benchmarks-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: fetchcontent-benchmarks-
+
+      - name: Configure CMake (benchmarks)
+        run: cmake --preset linux-gcc-release -DBUILD_BENCHMARKS=ON
+
+      - name: Build
+        run: cmake --build --preset linux-gcc-release --parallel --target bench_SearchEngine bench_WalkScanner
+
+      - name: Run benchmarks
+        run: |
+          mkdir -p benchmark-results
+          build/release/benchmarks/bench_SearchEngine --benchmark_out=benchmark-results/SearchEngine.json --benchmark_out_format=json
+          build/release/benchmarks/bench_WalkScanner --benchmark_out=benchmark-results/WalkScanner.json --benchmark_out_format=json
+
+      # Historical series persisted via cache (no gh-pages write needed);
+      # renders a trend chart into the job summary each run (rule 25).
+      - name: Cache benchmark history
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ./benchmark-history
+          key: benchmark-history-${{ github.run_id }}
+          restore-keys: benchmark-history-
+
+      - name: Track SearchEngine benchmark trend
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        with:
+          name: SearchEngine
+          tool: googlecpp
+          output-file-path: benchmark-results/SearchEngine.json
+          external-data-json-path: ./benchmark-history/search-engine.json
+          summary-always: true
+          fail-on-alert: false
+
+      - name: Track WalkScanner benchmark trend
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        with:
+          name: WalkScanner
+          tool: googlecpp
+          output-file-path: benchmark-results/WalkScanner.json
+          external-data-json-path: ./benchmark-history/walk-scanner.json
+          summary-always: true
+          fail-on-alert: false
+
+  build-asan:
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential qt6-base-dev libgl1-mesa-dev libblkid-dev libudev-dev
+
+      - name: Cache FetchContent dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: build/asan/_deps
           key: fetchcontent-asan-${{ hashFiles('CMakeLists.txt') }}
@@ -141,9 +255,14 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
+    # One release build per ref at a time -- prevents two tag pushes (or a
+    # re-run) racing to publish assets onto the same GitHub Release.
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install build dependencies
         run: |
@@ -151,7 +270,7 @@ jobs:
           sudo apt-get install -y cmake build-essential qt6-base-dev libgl1-mesa-dev libblkid-dev libudev-dev libfuse2
 
       - name: Cache FetchContent dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: build/release/_deps
           key: fetchcontent-release-${{ hashFiles('CMakeLists.txt') }}
@@ -160,8 +279,16 @@ jobs:
       - name: Build AppImage
         run: packaging/appimage/build-appimage.sh
 
+      # Release integrity verification (docs/adr/0010): checksums published on
+      # every release; signed tags deferred until a maintained signing key exists.
+      - name: Generate checksums
+        working-directory: packaging/appimage
+        run: sha256sum indexed-x86_64.AppImage > SHA256SUMS
+
       - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          files: packaging/appimage/indexed-x86_64.AppImage
+          files: |
+            packaging/appimage/indexed-x86_64.AppImage
+            packaging/appimage/SHA256SUMS
           fail_on_unmatched_files: true

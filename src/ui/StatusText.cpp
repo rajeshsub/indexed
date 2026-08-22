@@ -7,7 +7,7 @@ namespace indexed {
 std::string ResultCountText(size_t count, bool capped) {
     std::string text = FormatFileCount(count) + " result(s)";
     if (capped) {
-        text += " — showing first 10,000. Refine your search…";
+        text += " -- showing first 10,000. Refine your search…";
     }
     return text;
 }

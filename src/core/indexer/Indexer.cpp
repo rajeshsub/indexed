@@ -130,7 +130,7 @@ void Indexer::ApplyChangeEvent(const FileChangeEvent& event) {
             store_.ApplyRename(event.oldPath, event.path);
             return;
         case FileChangeType::Modified:
-            // Pool entries are append-only (docs/adr/0006) — there is no
+            // Pool entries are append-only (docs/adr/0006) -- there is no
             // "modify in place". Drop the stale record, then fall through to
             // the Added path to re-scan and add the fresh one.
             store_.ApplyRemove(event.path);

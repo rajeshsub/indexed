@@ -46,10 +46,10 @@ public:
 };
 
 // Parses /proc/self/mountinfo (real or fixture), classifying each mount as
-// index-eligible ("real"), pseudo (always dropped from the result — proc,
-// sysfs, tmpfs, cgroup*, ... — never index-eligible), or network (kept in
+// index-eligible ("real"), pseudo (always dropped from the result -- proc,
+// sysfs, tmpfs, cgroup*, ... -- never index-eligible), or network (kept in
 // the result with isNetwork=true, since the caller/UI decides whether to
-// offer it as a root — it should just not be a *default*-selected one).
+// offer it as a root -- it should just not be a *default*-selected one).
 class MountEnumerator {
 public:
     // Uses a real BlkidDeviceInfoResolver.

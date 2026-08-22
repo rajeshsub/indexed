@@ -21,7 +21,7 @@ std::string CaseFoldAscii(std::string_view text);
 // Flat-pool in-memory index layout (docs/adr/0006-pool-based-index-layout.md):
 // name/path strings live in two contiguous byte pools instead of per-entry
 // heap allocations, so a sequential search scan stays cache-resident instead
-// of chasing scattered pointers. nameLowerPool is never persisted to disk —
+// of chasing scattered pointers. nameLowerPool is never persisted to disk --
 // LoadFromPathPool rebuilds it from pathPool via ASCII case-fold.
 class IndexPool {
 public:

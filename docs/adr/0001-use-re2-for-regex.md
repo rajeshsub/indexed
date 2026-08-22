@@ -18,7 +18,7 @@ user-supplied input.
 ## Decision
 
 Use **RE2** (option c) via CMake `FetchContent`, pinned to a stable tag. Unchanged from
-winindex's ADR-0001 — RE2 is natively cross-platform and UTF-8, so the port carries the
+winindex's ADR-0001 -- RE2 is natively cross-platform and UTF-8, so the port carries the
 rationale forward without modification. Linux gains a small simplification: RE2 is
 UTF-8-native, so unlike winindex there is no UTF-16→UTF-8 conversion needed before
 matching.

@@ -54,7 +54,7 @@ int main(int argc, char* argv[]) {
     const std::string home = HomeDir();
     indexed::Settings settings(dirs.configPath, home);
     settings.Load();
-    indexed::Logger logger(dirs.logPath);
+    indexed::Logger logger(dirs.logPath, settings.LogLevel());
     logger.Log("indexed starting");
 
     if (!settings.FirstRunComplete()) {

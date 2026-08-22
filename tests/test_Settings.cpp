@@ -1,11 +1,13 @@
 #include <gtest/gtest.h>
 
+#include "settings/Logger.h"
 #include "settings/Settings.h"
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <string>
 
+using indexed::LogLevel;
 using indexed::Settings;
 
 namespace {
@@ -170,4 +172,39 @@ TEST(Settings, MultipleRootsAndExcludedPathsSurviveNewlineJoinRoundTrip) {
     }
 
     std::filesystem::remove(path);
+}
+
+TEST(Settings, LogLevelDefaultsToWarningWhenKeyAbsent) {
+    Settings settings(TempFilePath("loglevel_default"), "/home/testuser");
+    ASSERT_TRUE(settings.Load());
+
+    EXPECT_EQ(settings.LogLevel(), LogLevel::Warning);
+}
+
+TEST(Settings, SaveThenLoadRoundTripsLogLevel) {
+    const std::string path = TempFilePath("loglevel_roundtrip");
+    std::filesystem::remove(path);
+
+    {
+        Settings settings(path, "/home/testuser");
+        ASSERT_TRUE(settings.Load());
+        settings.SetLogLevel(LogLevel::Debug);
+        ASSERT_TRUE(settings.Save());
+    }
+    {
+        Settings settings(path, "/home/testuser");
+        ASSERT_TRUE(settings.Load());
+        EXPECT_EQ(settings.LogLevel(), LogLevel::Debug);
+    }
+
+    std::filesystem::remove(path);
+}
+
+TEST(Settings, SetLogLevelUpdatesInMemoryValueBeforeSave) {
+    Settings settings(TempFilePath("loglevel_inmemory"), "/home/testuser");
+    ASSERT_TRUE(settings.Load());
+
+    settings.SetLogLevel(LogLevel::Error);
+
+    EXPECT_EQ(settings.LogLevel(), LogLevel::Error);
 }

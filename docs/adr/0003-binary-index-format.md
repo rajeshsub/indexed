@@ -21,7 +21,7 @@ Use a **custom binary format** (option c), `indexed.idx`, magic `0x44584449` ("I
 version 1, with a CRC-32 integrity check over the payload (implemented in
 `IndexSerializer`). At millions of records, a flat binary write/read is an order of
 magnitude faster than any text or row-oriented format, and the format is purely an
-internal, rebuildable cache — cross-platform portability and ad-hoc queryability are not
+internal, rebuildable cache -- cross-platform portability and ad-hoc queryability are not
 requirements (§2 non-goals).
 
 Two decisions resolved during the grill-me pass, both hard-to-reverse since they're

@@ -55,6 +55,22 @@ set(UTF8PROC_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(UTF8PROC_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(utf8proc)
 
+# Off by default (extra FetchContent + compile cost not worth paying on every
+# debug/test build); the dedicated CI job and manual perf investigation turn
+# it on (docs/adr/0011-benchmark-tooling.md).
+option(BUILD_BENCHMARKS "Build Google Benchmark-based performance benchmarks" OFF)
+if(BUILD_BENCHMARKS)
+    FetchContent_Declare(
+        benchmark
+        GIT_REPOSITORY https://github.com/google/benchmark.git
+        GIT_TAG        v1.9.5
+    )
+    set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(benchmark)
+endif()
+
 find_package(PkgConfig REQUIRED)
 # Module is named "blkid" (not "libblkid") in this distro's blkid.pc.
 pkg_check_modules(BLKID REQUIRED IMPORTED_TARGET blkid)
@@ -74,6 +90,9 @@ add_subdirectory(src/core)
 add_subdirectory(src/ui)
 add_subdirectory(src/helper)
 add_subdirectory(tests)
+if(BUILD_BENCHMARKS)
+    add_subdirectory(benchmarks)
+endif()
 
 # ---------- Optional documentation ----------
 option(BUILD_DOCS "Build Doxygen documentation" OFF)

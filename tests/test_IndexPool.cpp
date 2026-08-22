@@ -98,7 +98,7 @@ TEST(IndexPool, LoadFromPathPoolRebuildsNameLowerAndAllFields) {
     original.AddEntry(MakeEntry("Beta.log", "/x/y/Beta.log", 333, 444));
 
     // Simulate what IndexSerializer::Load does: reconstruct from meta + pathPool only
-    // (nameLower is never persisted on disk — see docs/adr/0003-binary-index-format.md).
+    // (nameLower is never persisted on disk -- see docs/adr/0003-binary-index-format.md).
     IndexPool reloaded = IndexPool::LoadFromPathPool(original.Meta(), original.PathPool());
 
     ASSERT_EQ(reloaded.Count(), 2u);

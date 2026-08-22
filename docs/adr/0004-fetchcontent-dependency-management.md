@@ -18,7 +18,7 @@ dependency management strategy is required for both.
 ## Decision
 
 Use **CMake FetchContent** (option c) for the four small `core/`-side dependencies
-(googletest, abseil, re2, utf8proc), pinned to specific `GIT_TAG` values — unchanged
+(googletest, abseil, re2, utf8proc), pinned to specific `GIT_TAG` values -- unchanged
 rationale from winindex's ADR-0004. **Qt 6 is found via system `find_package(Qt6 REQUIRED
 COMPONENTS Widgets DBus)`**, not fetched: Qt is a large, actively-packaged system
 dependency on every mainstream Linux distro (`qt6-base-dev` / `qt6-qtbase-devel` /

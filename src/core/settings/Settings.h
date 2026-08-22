@@ -1,5 +1,6 @@
 #pragma once
 
+#include "settings/Logger.h"
 #include <string>
 #include <vector>
 
@@ -64,6 +65,12 @@ public:
     bool FirstRunComplete() const;
     void SetFirstRunComplete(bool value);
 
+    // Active log severity threshold (§12.1), sourced from `indexed.conf` so
+    // it's changeable without a rebuild (docs/adr/0009). Defaults to
+    // LogLevel::Warning when never saved (fresh install) or malformed.
+    indexed::LogLevel LogLevel() const;
+    void SetLogLevel(indexed::LogLevel value);
+
     // Default excluded paths (§12.3), with a leading "~" expanded against
     // homeDir. Exposed standalone so callers/tests can inspect the default
     // list without a Settings instance.
@@ -83,6 +90,7 @@ private:
     bool matchPath_ = false;
     bool ignoreDiacritics_ = false;
     bool firstRunComplete_ = false;
+    indexed::LogLevel logLevel_ = indexed::LogLevel::Warning;
 };
 
 }  // namespace indexed

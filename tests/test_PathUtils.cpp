@@ -15,6 +15,7 @@ using indexed::FormatFileCount;
 using indexed::FormatLocationList;
 using indexed::IsPortableMode;
 using indexed::Logger;
+using indexed::LogLevel;
 using indexed::ResolveDataDirs;
 using indexed::XdgEnv;
 
@@ -175,7 +176,11 @@ TEST(Logger, LogAppendsTimestampedLineAndCreatesParentDirectory) {
     std::string logPath = dir + "/nested/indexed.log";
     ASSERT_FALSE(std::filesystem::exists(dir));
 
-    Logger logger(logPath);
+    // Debug threshold: the default Log() level (Info) would otherwise be
+    // suppressed by the default Warning threshold (docs/adr/0009) -- this
+    // test exercises the write mechanics (timestamping, directory creation),
+    // not level filtering, which test_Logger.cpp covers separately.
+    Logger logger(logPath, LogLevel::Debug);
     ASSERT_TRUE(logger.Log("first message"));
     ASSERT_TRUE(logger.Log("second message"));
 

@@ -15,7 +15,7 @@ namespace indexed {
 //  - Bulk build: BeginWrite() resets a staging pool, AddEntry() stages
 //    entries into it, EndWrite() atomically swaps the staged pool into
 //    place under the exclusive lock. Readers via GetPool() never see a
-//    partially-built pool — they keep seeing the previous generation until
+//    partially-built pool -- they keep seeing the previous generation until
 //    EndWrite() completes.
 //  - Incremental: ApplyAdd/ApplyRemove/ApplyRename/RemoveEntriesUnderPath
 //    mutate the live pool in place (each takes the exclusive lock itself),
@@ -41,7 +41,7 @@ public:
 
     void LoadPool(IndexPool pool, uint64_t buildTimestampNs, uint64_t lastMonitorStopNs) override;
 
-    // Search-thread access. Neither of these locks internally — a caller on
+    // Search-thread access. Neither of these locks internally -- a caller on
     // the search thread must hold a shared lock via GetSearchMutex() for the
     // duration of use. Single-threaded test code may call them without
     // locking (no concurrent writer in a test).

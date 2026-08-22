@@ -18,6 +18,7 @@ constexpr const char* kKeyWholeWord = "WholeWord";
 constexpr const char* kKeyMatchPath = "MatchPath";
 constexpr const char* kKeyIgnoreDiacritics = "IgnoreDiacritics";
 constexpr const char* kKeyFirstRunComplete = "FirstRunComplete";
+constexpr const char* kKeyLogLevel = "LogLevel";
 
 std::vector<std::string> SplitLines(const std::string& joined) {
     std::vector<std::string> result;
@@ -92,6 +93,8 @@ bool Settings::Load() {
     matchPath_ = ini.GetBool(kKeyMatchPath, false);
     ignoreDiacritics_ = ini.GetBool(kKeyIgnoreDiacritics, false);
     firstRunComplete_ = ini.GetBool(kKeyFirstRunComplete, false);
+    logLevel_ =
+        ParseLogLevel(ini.GetString(kKeyLogLevel).value_or("WARNING"), indexed::LogLevel::Warning);
     return true;
 }
 
@@ -123,6 +126,7 @@ bool Settings::Save() {
     ini.SetBool(kKeyMatchPath, matchPath_);
     ini.SetBool(kKeyIgnoreDiacritics, ignoreDiacritics_);
     ini.SetBool(kKeyFirstRunComplete, firstRunComplete_);
+    ini.SetString(kKeyLogLevel, std::string(LogLevelName(logLevel_)));
 
     if (!ini.Save(configPath_)) {
         lastError_ = "Settings::Save: failed to write config file";
@@ -206,6 +210,14 @@ bool Settings::FirstRunComplete() const {
 
 void Settings::SetFirstRunComplete(bool value) {
     firstRunComplete_ = value;
+}
+
+indexed::LogLevel Settings::LogLevel() const {
+    return logLevel_;
+}
+
+void Settings::SetLogLevel(indexed::LogLevel value) {
+    logLevel_ = value;
 }
 
 std::vector<std::string> Settings::DefaultExcludedPaths(const std::string& homeDir) {

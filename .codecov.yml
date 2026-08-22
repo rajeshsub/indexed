@@ -1,6 +1,26 @@
 coverage:
   status:
+    # Project-wide: informational only, not a hard gate -- avoids blocking on
+    # legacy under-covered modules while the diff check (below) does the
+    # real gating (engineering-standards rule 3: diff-gated model).
     project:
       default:
         target: 70%
         threshold: 5%
+        informational: true
+    # Diff-gated: every PR's changed lines must clear the 80% meaningful-scope
+    # floor (rule 3). This is the enforcing check.
+    patch:
+      default:
+        target: 80%
+        threshold: 0%
+
+# Measured scope (rule 3): coverage.info already excludes FetchContent'd
+# third-party sources and system headers at generation time (see the `lcov
+# --remove` step in .github/workflows/ci.yml, the pinned source of that
+# scope). This ignore list additionally excludes test/benchmark code itself,
+# which always executes and isn't meaningful business logic to measure.
+ignore:
+  - "tests/**"
+  - "benchmarks/**"
+  - "build/**"

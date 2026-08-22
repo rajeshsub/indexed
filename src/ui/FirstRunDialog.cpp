@@ -18,7 +18,7 @@ namespace indexed {
 FirstRunDialog::FirstRunDialog(std::vector<MountInfo> mounts, std::string homeDir,
                                std::vector<std::string> defaultExcludedPaths, QWidget* parent)
     : QDialog(parent), mounts_(std::move(mounts)), homeDir_(std::move(homeDir)) {
-    setWindowTitle(tr("indexed — First Run Setup"));
+    setWindowTitle(tr("indexed -- First Run Setup"));
 
     BuildUi();
     PopulateMountList();

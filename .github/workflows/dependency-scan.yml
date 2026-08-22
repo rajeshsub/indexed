@@ -1,0 +1,23 @@
+name: Dependency Scan
+
+# Scheduled re-scan of already-pinned dependency versions (rule 18): catches
+# CVEs disclosed after a dependency was pinned, which the PR-time scan in
+# ci.yml can't -- that one only runs when a dependency actually changes.
+on:
+  schedule:
+    - cron: "0 6 * * 1" # weekly, Monday 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  scan-scheduled:
+    permissions:
+      contents: read
+      security-events: write
+      actions: read  # osv-scanner-reusable.yml's SARIF upload step needs this
+    # See the coverage note on the "dependency-scan" job in ci.yml: this has
+    # nothing C++/FetchContent-side to check today (no lockfile-format
+    # manifest), so it currently covers only Python tooling dependencies.
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@6e4298ebc4db23e847df9b2e2de2939d6f066c67 # v2.5.1

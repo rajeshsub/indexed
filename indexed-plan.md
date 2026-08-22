@@ -1,11 +1,11 @@
-# `indexed` — Implementation Plan (Handoff Document)
+# `indexed` -- Implementation Plan (Handoff Document)
 
 > **Status:** Grilled and resolved. All items formerly listed in Open Questions (§18) were
 > resolved in a `grill-me` interview; see §18 for the decisions log and `docs/adr/` for the
 > structural decisions recorded as ADRs. Ready for M0 implementation.
 >
 > **Repo:** https://github.com/rajeshsub/indexed · **License:** MIT
-> **Reference implementation:** winindex (Windows) — https://github.com/rajeshsub/winindex
+> **Reference implementation:** winindex (Windows) -- https://github.com/rajeshsub/winindex
 > A local checkout of winindex is available at `/home/rajesh/projects/winindex`. Treat it
 > as the ground-truth reference for behavior, module boundaries, and UI layout. This plan
 > is written to be self-contained, but when in doubt, read the winindex source.
@@ -43,7 +43,7 @@ The output utility is named **`indexed`**.
 - **File *content* search** (grep-like). This tool indexes **names and paths only**, like
   winindex.
 - **Multi-user index sharing / per-user permission filtering.** The privileged indexer sees
-  all files and the local user sees all results — same trust model as elevated winindex.
+  all files and the local user sees all results -- same trust model as elevated winindex.
   Designed for a single-user workstation. (Noted as a risk in §17.)
 - **Filesystem-specific raw inode reading** (e.g. reading ext4 inode tables directly like
   winindex reads the NTFS MFT). Linux has no portable, safe equivalent on *mounted*
@@ -71,10 +71,10 @@ The output utility is named **`indexed`**.
 | Desktop environments | XFCE, GNOME, KDE, others (Qt runs everywhere; file-manager integration is best-effort per DE) |
 | Architectures | `x86-64` (primary, with AVX2/SSE4.2 SIMD), `aarch64` (NEON or scalar fallback) |
 | Language standard | **C++20** (same as winindex) |
-| Filesystems indexed | ext4, btrfs, xfs, f2fs, vfat/exFAT, ntfs3, etc. — anything mounted and readable |
+| Filesystems indexed | ext4, btrfs, xfs, f2fs, vfat/exFAT, ntfs3, etc. -- anything mounted and readable |
 | Filesystems skipped | pseudo/virtual FS (proc, sys, dev, run, tmpfs\*, cgroup, etc.) and network mounts (nfs, cifs, sshfs) by default |
 
-\* `tmpfs` skipped by default except where it hosts real user data — see default exclusions (§12.3).
+\* `tmpfs` skipped by default except where it hosts real user data -- see default exclusions (§12.3).
 
 ---
 
@@ -86,7 +86,7 @@ The output utility is named **`indexed`**.
 | GUI toolkit | **Qt 6** (Widgets) | Consistent look/behavior across all distros & DEs, rich virtual model/view, built-in DnD, clipboard, `QFile::moveToTrash`, `QDesktopServices`. LGPL-3.0 (dynamic linking keeps us MIT-compatible). |
 | Build | CMake **≥ 3.28** + `FetchContent` | Mirrors winindex; no manual dep install for header/small libs. Qt found via system `find_package(Qt6)`. |
 | Regex | **RE2** + **abseil** (FetchContent) | Linear-time, DoS-safe; same as winindex (ADR-0001). Cross-platform. |
-| Unicode case-fold & diacritics | **utf8proc** (MIT, FetchContent) | Correct UTF-8 lowercasing + NFKD decomposition for `IgnoreDiacritics`. Tiny, MIT — replaces Win32 `towlower`/`CompareString`. |
+| Unicode case-fold & diacritics | **utf8proc** (MIT, FetchContent) | Correct UTF-8 lowercasing + NFKD decomposition for `IgnoreDiacritics`. Tiny, MIT -- replaces Win32 `towlower`/`CompareString`. |
 | Unit tests | **GoogleTest / GoogleMock** (FetchContent) | Mirrors winindex test suite and mocks. |
 | Fast scan | Raw **`getdents64`** parallel directory walk + `statx` | No MFT on Linux; this is the portable fast path (§7.1). |
 | Live monitoring | **fanotify** (whole-mount, root) + **inotify** fallback | fanotify `FAN_MARK_FILESYSTEM` is the closest analog to the USN journal (§8). |
@@ -94,7 +94,7 @@ The output utility is named **`indexed`**.
 | Hotplug detection | Poll `/proc/self/mountinfo` (portable) + optional **libudev** | Replaces `RegisterDeviceNotification`/`WM_DEVICECHANGE`. |
 | Trash | `QFile::moveToTrash` (freedesktop Trash spec) | Replaces Recycle Bin. |
 | Open / reveal file | `QDesktopServices::openUrl` (xdg-open) + D-Bus `org.freedesktop.FileManager1.ShowItems` | Replaces `ShellExecute` / `SHOpenFolderAndSelectItems`. |
-| Elevation | **polkit / `pkexec`**, session-lifetime helper (sole v0.1.0 path — no setcap/systemd) | Replaces the Windows "run as administrator" model (§9). |
+| Elevation | **polkit / `pkexec`**, session-lifetime helper (sole v0.1.0 path -- no setcap/systemd) | Replaces the Windows "run as administrator" model (§9). |
 | Config storage | Hand-rolled INI in `core` (Qt-free); XDG paths | Keeps `core` free of Qt so tests and the helper don't need Qt. Mirrors winindex INI. |
 | Packaging | **AppImage** (+ `.desktop`, icon, AppStream metainfo) | Single portable binary, runs on any modern distro. Closest to winindex's portable ZIP. |
 | CI | GitHub Actions on `ubuntu-latest` | Lint (clang-format), build debug/release, ctest, ASAN, coverage, AppImage on tags. |
@@ -124,7 +124,7 @@ unless marked "(future)".**
 | 9 | OLE drag-drop (`CF_HDROP`) | Qt `QDrag` + `QMimeData::setUrls()` → `text/uri-list`. |
 | 10 | Copy path/name to clipboard (`CF_UNICODETEXT`) | `QClipboard::setText()`. |
 | 11 | Cut (`CF_HDROP` + `CFSTR_PREFERREDDROPEFFECT`=Move) | Clipboard MIME `x-special/gnome-copied-files` = `"cut\n<uri>"` (understood by Nautilus/Thunar/Dolphin) **plus** `text/uri-list`. |
-| 12 | `RegisterDeviceNotification` / `WM_DEVICECHANGE` hotplug | Poll `/proc/self/mountinfo` for mount add/remove (+ optional libudev). Emit "drive connected — add it in Settings". |
+| 12 | `RegisterDeviceNotification` / `WM_DEVICECHANGE` hotplug | Poll `/proc/self/mountinfo` for mount add/remove (+ optional libudev). Emit "drive connected -- add it in Settings". |
 | 13 | `GetLogicalDrives` + NTFS/FAT32 detection | Parse `/proc/self/mountinfo`; fstype string; label via libblkid; `removable` via `/sys/block/*/removable`. |
 | 14 | `%APPDATA%\winindex\winindex.ini` | XDG paths (§11). Config in `$XDG_CONFIG_HOME/indexed/`, index+log in `$XDG_CACHE_HOME/indexed/`. |
 | 15 | Portable mode (`winindex.ini` next to exe) | `indexed.conf` next to the binary → all data stored beside it. |
@@ -164,10 +164,10 @@ Mirror winindex's clean, interface-driven, dependency-injected structure.
 ```
 
 **Process/privilege split (§9):**
-- **`indexed`** — Qt GUI. Unprivileged. Loads & searches the on-disk index in-process.
+- **`indexed`** -- Qt GUI. Unprivileged. Loads & searches the on-disk index in-process.
   The only binary a user ever launches directly.
-- **`indexed-helper`** — the privileged indexer + fanotify monitor. Launched on demand via
-  `pkexec` (decided in grill-me: no setcap/systemd path for v0.1.0 — see
+- **`indexed-helper`** -- the privileged indexer + fanotify monitor. Launched on demand via
+  `pkexec` (decided in grill-me: no setcap/systemd path for v0.1.0 -- see
   `docs/adr/0008-privileged-helper-and-elevation.md`), runs as **root**, and lives for the
   duration of the GUI session (launched at first privileged action, stopped via `SIGTERM`
   when the GUI exits). It resolves the invoking user via `PKEXEC_UID` + `getpwuid()` (never
@@ -215,7 +215,7 @@ indexed/
         Trash.{h,cpp}             # (thin; GUI may use QFile::moveToTrash directly)
         Reveal.{h,cpp}            # FileManager1 D-Bus (GUI-side wrapper may live in ui/)
         Elevation.{h,cpp}         # pkexec / capability checks
-    ui/            # Qt — depends on core
+    ui/            # Qt -- depends on core
       CMakeLists.txt
       main.cpp
       MainWindow.{h,cpp}
@@ -239,7 +239,7 @@ indexed/
 
 ## 7. Component Specs
 
-### 7.1 Scanner — `WalkScanner` (implements `IFileSystemScanner`)
+### 7.1 Scanner -- `WalkScanner` (implements `IFileSystemScanner`)
 
 **Interface (ported from winindex `IFileSystemScanner.h`, UTF-8):**
 ```cpp
@@ -248,7 +248,7 @@ struct FileEntry {
     std::string nameLower;   // pre-folded lowercase (utf8proc); may be filled by pool
     std::string path;        // full absolute path
     uint64_t    size;
-    uint64_t    lastModified;// nanoseconds since epoch (statx stx_mtime) — pick ONE epoch, document it
+    uint64_t    lastModified;// nanoseconds since epoch (statx stx_mtime) -- pick ONE epoch, document it
     uint32_t    attributes;  // bitfield: is-dir, is-symlink, hidden (name starts with '.'), etc.
 };
 using ScanCallback     = std::function<void(const FileEntry&)>;
@@ -270,12 +270,12 @@ public:
 - **Do not cross mount boundaries** unless the mount is itself a selected root. Detect via
   `statx` `stx_mnt_id` (kernel ≥5.8) or by comparing `st_dev`. This prevents descending into
   pseudo/network mounts and avoids double-indexing.
-- **Skip symlinks** (don't follow) to avoid loops — mirrors winindex skipping reparse points.
+- **Skip symlinks** (don't follow) to avoid loops -- mirrors winindex skipping reparse points.
 - **Exclusions:** prune any directory whose path matches an excluded prefix (normalize
   trailing `/`). Compare on canonical absolute paths.
 - **Metadata:** use `statx` with a mask requesting only `size|mtime|type|mode`. Consider
   `AT_STATX_DONT_SYNC` for speed. `d_type` from `getdents64` often gives file type without a
-  stat — use it to skip `statx` on entries where only name is needed (but we need size+mtime
+  stat -- use it to skip `statx` on entries where only name is needed (but we need size+mtime
   for columns, so `statx` per file is generally required; batch/parallelize).
 - **Parallelism:** a work-stealing thread pool of directory jobs (one root seeds N workers;
   subdirectories are pushed back onto the queue). Target: saturate I/O without thrashing.
@@ -289,7 +289,7 @@ walk of a large home directory is sub-second to a few seconds. Cold cache on spi
 seek-bound and slower. There is **no** MFT-style shortcut on ext4/btrfs/xfs while mounted.
 Do not over-promise "seconds for a 500 GB drive" the way the NTFS MFT path could.
 
-### 7.2 Change Monitoring — `FanotifyMonitor` + `InotifyWatcher` (implement `IChangeMonitor`)
+### 7.2 Change Monitoring -- `FanotifyMonitor` + `InotifyWatcher` (implement `IChangeMonitor`)
 
 **Interface (replaces `IUsnJournalMonitor` + `ChangeWatcher`):**
 ```cpp
@@ -316,7 +316,7 @@ public:
 - Map `FAN_CREATE`→Added, `FAN_DELETE`→Removed, `FAN_MOVED_FROM`+`FAN_MOVED_TO`→Renamed,
   `FAN_MODIFY`→Modified.
 - **Requires kernel ≥ 5.9** (`FAN_REPORT_DFID_NAME`) and `CAP_SYS_ADMIN`.
-- **Key difference from USN journal:** fanotify has **no historical replay** — it is
+- **Key difference from USN journal:** fanotify has **no historical replay** -- it is
   live-only. There is no "saved USN cursor" to replay missed changes after downtime.
   Therefore: on startup, if the on-disk index is older than the reindex interval (or the
   helper wasn't running), **do a fresh scan**; then start live monitoring. Persist a
@@ -329,13 +329,13 @@ public:
   are created/deleted.
 - **Limitation to document & surface in UI:** watches are per-directory and bounded by
   `fs.inotify.max_user_watches`. On huge trees this can be exhausted; when `add_watch` fails
-  with `ENOSPC`, log it and set index status to "live monitoring incomplete — periodic
+  with `ENOSPC`, log it and set index status to "live monitoring incomplete -- periodic
   rescan active". Fall back to interval rescans.
 
 **Selection logic (in `Indexer`):** prefer fanotify when the helper has `CAP_SYS_ADMIN` and
 kernel supports it; else inotify; else interval-only rescans.
 
-### 7.3 Storage — `IndexPool`, `IndexStore`, `IndexSerializer`
+### 7.3 Storage -- `IndexPool`, `IndexStore`, `IndexSerializer`
 
 Port winindex's flat-pool design (ADR-0006) verbatim, converting `wchar_t`→`char` (UTF-8).
 
@@ -356,7 +356,7 @@ struct EntryMeta {
 ```
 > **Resolved in grill-me (see `docs/adr/0006-pool-based-index-layout.md`):** pool offsets
 > are **64-bit** (`pathOffset`/`nameLowerOffset`), permanently removing the ~4 GiB
-> single-pool ceiling a 32-bit offset would impose — cheap to pay for (+8 bytes/entry,
+> single-pool ceiling a 32-bit offset would impose -- cheap to pay for (+8 bytes/entry,
 > ~80 MB at 10M entries) given this is an on-disk format that's expensive to migrate later.
 > `nameStart` stays `uint16_t` (a single path *component* never approaches 65535 bytes).
 > `pathLen`/`nameLowerLen` stay `uint32_t` (`PATH_MAX` is 4096, so `uint16_t` would already
@@ -365,18 +365,18 @@ struct EntryMeta {
 
 **`IndexPool`:** `std::vector<EntryMeta> meta; std::vector<char> nameLowerPool; std::vector<char> pathPool;`
 Separate name-lower pool (compact, L3-resident, default search target) and full-path pool
-(opt-in `matchPath`). `nameLower` is **not** persisted — rebuilt from path + `nameStart` via
+(opt-in `matchPath`). `nameLower` is **not** persisted -- rebuilt from path + `nameStart` via
 utf8proc at load. Same zero-copy `string_view` accessors.
 
 **`IndexStore`:** `BeginWrite/AddEntry/EndWrite` bulk staging swapped in under an exclusive
 `std::shared_mutex`; `ApplyAdd/ApplyRemove/ApplyRename/RemoveEntriesUnderPath` for incremental
 changes; `GetPool()`/`GetSearchMutex()` for the search thread (shared lock). Port
 `GetIndexAgeSeconds` (staleness) and replace the USN-cursor map (`GetSavedUsn/SetSavedUsn`)
-with a `lastMonitorStop` timestamp (fanotify has no cursor — §7.2).
+with a `lastMonitorStop` timestamp (fanotify has no cursor -- §7.2).
 
-**`IndexSerializer` — on-disk format `indexed.idx` v1** (§10). Custom binary + CRC-32.
+**`IndexSerializer` -- on-disk format `indexed.idx` v1** (§10). Custom binary + CRC-32.
 
-### 7.4 Search — `SearchEngine` (implements `ISearchEngine`)
+### 7.4 Search -- `SearchEngine` (implements `ISearchEngine`)
 
 Port winindex `SearchEngine` exactly, byte-level UTF-8:
 - **Substring mode:** needle + names pre-folded to lowercase; `SimdFindSubstring` dispatches at
@@ -386,11 +386,11 @@ Port winindex `SearchEngine` exactly, byte-level UTF-8:
   query and filename into tokens; match if **every** query token appears in the filename token
   set. Single-word queries skip this (keeps SIMD fast path). Port `TokenMatcher` verbatim.
 - **Regex mode:** RE2 over UTF-8 names (or full paths when `matchPath`). RE2 is natively UTF-8
-  — simpler than winindex which had to convert UTF-16→UTF-8 first.
+  -- simpler than winindex which had to convert UTF-16→UTF-8 first.
 - **Options** (`SearchOptions`): `useRegex, caseSensitive, wholeWord, matchPath, ignoreDiacritics`.
 - **Diacritics:** when `ignoreDiacritics`, fold both query and (pre-computed) names via utf8proc
   NFKD + strip combining marks. Decide whether to precompute a diacritic-folded pool or fold
-  on the fly (winindex folded on the fly with a per-thread buffer) — **recommend on-the-fly**
+  on the fly (winindex folded on the fly with a per-thread buffer) -- **recommend on-the-fly**
   to avoid a 4th pool, matching winindex's `pathLower` deferral.
 - **Caps:** max 10 000 results; cooperative early-exit + `cancelToken`; results carry
   `entryIndex, matchStart, matchLen` for highlight.
@@ -398,7 +398,7 @@ Port winindex `SearchEngine` exactly, byte-level UTF-8:
   duration; results posted back to the UI thread (Qt: `QMetaObject::invokeMethod` /
   queued signal, replacing `PostMessage`).
 
-### 7.5 Settings — `Settings`, `IniFile`, `PathUtils`, `Logger`
+### 7.5 Settings -- `Settings`, `IniFile`, `PathUtils`, `Logger`
 
 Port winindex `Settings` with a small hand-rolled `IniFile` (Qt-free). Schema in §12.
 - **Data dir resolution** (`PathUtils`): portable mode if `indexed.conf` sits next to the
@@ -406,9 +406,11 @@ Port winindex `Settings` with a small hand-rolled `IniFile` (Qt-free). Schema in
 - `EnsureDirectory`, `FormatFileCount` (thousands separators), `FormatAge`
   ("just indexed" / "N min old" / "N hrs old" / "N days, N hrs old"),
   `FormatLocationList` (shorten roots, strip trailing `/`). Port all.
-- `Logger`: simple timestamped append log to `<datadir>/indexed.log`.
+- `Logger`: timestamped append log to `<datadir>/indexed.log`, filtered by a
+  `LogLevel` severity threshold (`Error`/`Warning`/`Info`/`Debug`, default `Warning`,
+  configurable via the `LogLevel` key -- see `docs/adr/0009-log-severity-levels.md`).
 
-### 7.6 Mount enumeration & hotplug — `MountEnumerator`
+### 7.6 Mount enumeration & hotplug -- `MountEnumerator`
 
 - Parse `/proc/self/mountinfo` → `{ mountPoint, device, fsType, label, removable, isNetwork }`.
 - Classify: real fs vs pseudo (skip proc/sys/dev/run/cgroup*/tmpfs\*/...) vs network
@@ -416,25 +418,25 @@ Port winindex `Settings` with a small hand-rolled `IniFile` (Qt-free). Schema in
 - `label` via **libblkid** (`blkid_get_tag_value`) or reading `/dev/disk/by-label/` symlinks;
   `removable` via `/sys/block/<dev>/removable`.
 - **Hotplug:** monitor `/proc/self/mountinfo` for changes by `poll()`-ing its `fd` for
-  `POLLPRI` (mountinfo signals changes via priority events) — portable, no extra deps.
+  `POLLPRI` (mountinfo signals changes via priority events) -- portable, no extra deps.
   Optional libudev `monitor` on the `block`/`filesystem` subsystem for richer events. On
-  mount add → status "Filesystem <x> mounted — add it in Settings to index it." On remove →
+  mount add → status "Filesystem <x> mounted -- add it in Settings to index it." On remove →
   "Filesystem <x> unmounted." (Mirrors winindex `OnDeviceChange`.)
 
-### 7.7 Indexer orchestration — `Indexer`
+### 7.7 Indexer orchestration -- `Indexer`
 
 Port winindex `Indexer` control flow:
 - `StartIndexing(force)`: if a valid, non-stale on-disk index exists and `!force`, load it and
   go straight to monitoring; else scan roots, build pool, save `.idx`, then monitor.
 - `IndexPaths(paths)` / `RemovePaths(paths)`: incremental add/remove when Settings change (the
-  UI diffs old vs new selected roots — port that logic from `MainWindow::OnCommand`
+  UI diffs old vs new selected roots -- port that logic from `MainWindow::OnCommand`
   `ID_INDEX_SETTINGS`).
 - `StartLiveMonitoring`: spin one monitor per root (fanotify or inotify) on background threads;
   apply `FileChangeEvent`s into `IndexStore` under exclusive lock, then notify the UI to
-  refresh the current query (so new files appear in results instantly — winindex commit
+  refresh the current query (so new files appear in results instantly -- winindex commit
   "live file monitoring so new files appear instantly").
 - Status reporting via a `StatusCallback(IndexerStatus)` (state, message, filesIndexed,
-  skippedPaths, locations, indexAgeSeconds) — identical struct to winindex. States:
+  skippedPaths, locations, indexAgeSeconds) -- identical struct to winindex. States:
   `Idle, Scanning, LoadingIndex, WatchingForChanges, Error`.
 - **Where it runs:** the scanning + monitoring work is performed by the **`indexed-helper`**
   process (§9), launched via `pkexec` for the lifetime of the GUI session. The GUI's
@@ -443,7 +445,7 @@ Port winindex `Indexer` control flow:
 
 ---
 
-## 8. Live-Monitoring Design Detail (fanotify vs USN — read carefully)
+## 8. Live-Monitoring Design Detail (fanotify vs USN -- read carefully)
 
 The single biggest semantic gap from winindex. Spell it out so grill-me can probe it:
 
@@ -470,45 +472,45 @@ The single biggest semantic gap from winindex. Spell it out so grill-me can prob
 
 User chose **"require root for full functionality."** Resolved in grill-me (see
 `docs/adr/0008-privileged-helper-and-elevation.md`): **pkexec-on-demand is the sole
-delivery path for v0.1.0** — no setcap/systemd alternative is built now. If distro
+delivery path for v0.1.0** -- no setcap/systemd alternative is built now. If distro
 packaging (deb/rpm/AUR) is pursued later, a setcap-installed fast path can be added as a
 follow-on ADR; it isn't designed here because AppImage is the only v0.1.0 packaging target
 (§14.2) and setcap cannot apply inside a read-only squashfs anyway.
 
 ### 9.1 Two binaries
-- **`indexed`** — Qt GUI. **Never runs as root.** Loads/searches the on-disk index
+- **`indexed`** -- Qt GUI. **Never runs as root.** Loads/searches the on-disk index
   in-process. The only binary a user launches directly.
-- **`indexed-helper`** — the indexer + fanotify monitor. Needs `CAP_SYS_ADMIN` (fanotify
+- **`indexed-helper`** -- the indexer + fanotify monitor. Needs `CAP_SYS_ADMIN` (fanotify
   whole-mount, `open_by_handle_at`) and `CAP_DAC_READ_SEARCH` (traverse/read all files).
 
 ### 9.2 Privilege delivery: pkexec-on-demand, session-lifetime helper
 - Elevated via **`pkexec indexed-helper`** (polkit policy
   `packaging/polkit/org.indexed.helper.policy`). The helper runs as **root**.
-- **Lifecycle:** the GUI launches the helper once — at first privileged action (initial
-  index build or enabling live monitoring), not at every action — and it runs for the
+- **Lifecycle:** the GUI launches the helper once -- at first privileged action (initial
+  index build or enabling live monitoring), not at every action -- and it runs for the
   **lifetime of the GUI session**: it performs the initial scan-if-stale, then blocks
   holding the fanotify monitor. The GUI sends `SIGTERM` when it exits (or the user
   explicitly stops monitoring). This means **one polkit prompt per GUI session**, not one
-  per action. No systemd service, no persistence across GUI restarts — a fresh session
+  per action. No systemd service, no persistence across GUI restarts -- a fresh session
   re-prompts and re-evaluates staleness (§8's rescan-if-stale mitigation already covers the
   resulting drift, so this isn't a new gap).
-- **Root-write safety (closes Risk §17.2 — this is the actual security-critical part):**
+- **Root-write safety (closes Risk §17.2 -- this is the actual security-critical part):**
   because the helper runs as root but must write into an *unprivileged* user's XDG dirs, it
   must never trust attacker-controllable input to decide where it writes:
   - Resolve the target user via **`PKEXEC_UID`** (set by polkit itself, not by the
-    environment the helper inherits) + `getpwuid()` — never `$HOME`/`$XDG_CONFIG_HOME`/etc.,
+    environment the helper inherits) + `getpwuid()` -- never `$HOME`/`$XDG_CONFIG_HOME`/etc.,
     which could be spoofed by whatever launched the pkexec call.
   - Open every output path (index file, status file, log) with **`O_NOFOLLOW`**, and refuse
     to write if any path component up to the target XDG directory is not owned by the
     resolved target uid. This closes the classic local-root-helper escalation: a malicious
     local process pre-creating `~/.cache/indexed/indexed.idx` as a symlink to `/etc/shadow`
     before the root helper opens it for writing.
-  - Unit-test this in `test_Elevation` (mocked filesystem) — proving the symlink-rejection
+  - Unit-test this in `test_Elevation` (mocked filesystem) -- proving the symlink-rejection
     and ownership-check behavior is exactly the kind of security-critical logic that most
     needs a runnable check (engineering-standards rule 15).
 
 ### 9.3 GUI ↔ helper interaction
-Resolved in grill-me: a fixed, small set of Unix signals plus shared files — no socket, no
+Resolved in grill-me: a fixed, small set of Unix signals plus shared files -- no socket, no
 D-Bus service, no request/response protocol. Three commands and one status readout don't
 justify more machinery (see `docs/adr/0007-fanotify-vs-inotify-monitoring.md` for the
 comparison against a socket/D-Bus alternative).
@@ -517,12 +519,12 @@ comparison against a socket/D-Bus alternative).
 - **`SIGUSR1`** → helper triggers an immediate reindex.
 - **`SIGTERM`** → helper stops monitoring and exits cleanly.
 - Helper periodically rewrites a small **status file** (state enum, files-found count,
-  current directory) that the GUI watches via inotify — this is how scan progress (§19
+  current directory) that the GUI watches via inotify -- this is how scan progress (§19
   status bar) reaches the GUI without a control channel.
 - Helper writes/updates `<datadir>/indexed.idx` on completion of a (re)scan or incremental
   change; GUI detects updates by watching the `.idx` file (inotify on the single file) and
   reloads the pool under exclusive lock. The `.idx` file itself stays **whole-file reload**,
-  not a delta protocol — resolved as the pragmatic v0.1.0 choice; the status file (above)
+  not a delta protocol -- resolved as the pragmatic v0.1.0 choice; the status file (above)
   carries progress instead of requiring `.idx` itself to support incremental deltas.
 
 ---
@@ -567,7 +569,7 @@ Payload:
 | Data | Location (normal) | Portable mode |
 |------|-------------------|---------------|
 | Config (INI) | `$XDG_CONFIG_HOME/indexed/indexed.conf` (default `~/.config/indexed/indexed.conf`) | `indexed.conf` next to the binary |
-| Index (`.idx`) | `$XDG_CACHE_HOME/indexed/indexed.idx` (default `~/.cache/indexed/`) — it's a rebuildable cache | beside the binary |
+| Index (`.idx`) | `$XDG_CACHE_HOME/indexed/indexed.idx` (default `~/.cache/indexed/`) -- it's a rebuildable cache | beside the binary |
 | Log | `$XDG_STATE_HOME/indexed/indexed.log` (default `~/.local/state/indexed/`) or alongside cache | beside the binary |
 
 - **Portable detection:** `indexed.conf` exists next to `/proc/self/exe` → portable; all three
@@ -581,7 +583,7 @@ Payload:
 
 ## 12. Settings Schema, Shortcuts, Defaults
 
-### 12.1 Settings (INI) — mirrors winindex keys
+### 12.1 Settings (INI) -- mirrors winindex keys
 
 | Key | Default | Meaning |
 |-----|---------|---------|
@@ -594,8 +596,9 @@ Payload:
 | `MatchPath` | `0` | match full path vs basename |
 | `IgnoreDiacritics` | `0` | |
 | `FirstRunComplete` | `0` | set after first-run dialog |
+| `LogLevel` | `WARNING` | active log severity threshold (`ERROR`/`WARNING`/`INFO`/`DEBUG`); malformed values fall back to `WARNING` |
 
-> **Resolved in grill-me:** newline-delimited (`\n`), not `:`/`;`/`|` — those are all legal
+> **Resolved in grill-me:** newline-delimited (`\n`), not `:`/`;`/`|` -- those are all legal
 > bytes in a POSIX filename, so naively splitting on them risks silent corruption. A path
 > containing a literal `\n` (vanishingly rare, and never producible via the GUI's own folder
 > pickers) is rejected with a clear error at Settings-save time rather than silently
@@ -622,19 +625,19 @@ Payload:
 ### 12.3 Default excluded paths (Linux equivalents of winindex's Windows defaults)
 
 Applied as initial defaults on a fresh install; once the user saves their own list, it's used
-as-is (don't re-inject) — same policy as winindex.
+as-is (don't re-inject) -- same policy as winindex.
 
 - Pseudo-filesystems (always skipped by the walker regardless, but list for clarity):
   `/proc`, `/sys`, `/dev`, `/run`, `/tmp`
 - `/var/cache`, `/var/tmp`, `/var/lib/docker`, `/var/lib/containers`
 - `/snap`, `/var/lib/flatpak`, `~/.cache`, `~/.local/share/Trash`
-- `~/.local/share/containers` (rootless Podman storage) — **added in grill-me**
-- `~/.var/app` (per-user Flatpak app data, Fedora's default Flatpak layout) — **added in
+- `~/.local/share/containers` (rootless Podman storage) -- **added in grill-me**
+- `~/.var/app` (per-user Flatpak app data, Fedora's default Flatpak layout) -- **added in
   grill-me**
 - Lost+found: `/lost+found` (and per-mount `lost+found`)
-- Network mounts (nfs/cifs/sshfs) — skipped by mount classification, not path list.
+- Network mounts (nfs/cifs/sshfs) -- skipped by mount classification, not path list.
 
-> Do **not** exclude `~/.config`, `~/.local/share` broadly, or user project dirs — users
+> Do **not** exclude `~/.config`, `~/.local/share` broadly, or user project dirs -- users
 > search those. Keep the default list conservative (system noise only). Confirmed in grill-me.
 
 ---
@@ -642,12 +645,12 @@ as-is (don't re-inject) — same policy as winindex.
 ## 13. Documentation & Repo Hygiene (port + adapt)
 
 Create these so the repo mirrors winindex's professionalism:
-- **`LICENSE`** — MIT, copyright **Rajesh Subramanian** (no contact info), year 2026.
-- **`README.md`** — same structure as winindex's (Features / How it works / Building /
+- **`LICENSE`** -- MIT, copyright **Rajesh Subramanian** (no contact info), year 2026.
+- **`README.md`** -- same structure as winindex's (Features / How it works / Building /
   Settings / Shortcuts / Project structure / Releases / Development setup / License), rewritten
   for Linux, with a screenshot of the Qt app.
-- **`CHANGELOG.md`** — Keep-a-Changelog, `0.1.0` initial entry listing ported features.
-- **ADRs** in `docs/adr/` — port and adapt:
+- **`CHANGELOG.md`** -- Keep-a-Changelog, `0.1.0` initial entry listing ported features.
+- **ADRs** in `docs/adr/` -- port and adapt:
   - `0001-use-re2-for-regex.md` (unchanged rationale)
   - `0002-directory-walk-scanning-strategy.md` (**new**, replaces MFT ADR: why getdents64
     walk, why no raw-fs read)
@@ -660,7 +663,7 @@ Create these so the repo mirrors winindex's professionalism:
   - `0008-privileged-helper-and-elevation.md` (**new**: pkexec-on-demand only for v0.1.0,
     `PKEXEC_UID`-based root-write hardening, §9)
 - **`.clang-format`, `.clang-tidy`, `.editorconfig`, `.gitignore`, `.pre-commit-config.yaml`,
-  `.codecov.yml`, `Doxyfile`** — port from winindex, adjust for GCC/Clang/Linux.
+  `.codecov.yml`, `Doxyfile`** -- port from winindex, adjust for GCC/Clang/Linux.
 
 ---
 
@@ -671,41 +674,41 @@ Create these so the repo mirrors winindex's professionalism:
   message(FATAL_ERROR ...)`), C++20, no extensions.
 - FetchContent: googletest, abseil, re2, utf8proc (after which strict warnings are enabled so
   third-party code isn't held to `-Werror`).
-- `find_package(Qt6 REQUIRED COMPONENTS Widgets DBus)` — Qt is a **system** dependency, not
+- `find_package(Qt6 REQUIRED COMPONENTS Widgets DBus)` -- Qt is a **system** dependency, not
   fetched. `find_package(PkgConfig)` → `blkid` (optional), `libudev` (optional).
 - Warnings: `-Wall -Wextra -Wpedantic -Werror` for our targets (mirror MSVC `/W4 /WX`).
 - `option(ENABLE_ASAN)` → `-fsanitize=address -fno-omit-frame-pointer` (much simpler than the
   MSVC ASAN dance winindex needed).
 - SIMD: compile `SimdSearchAvx2.cpp` with `-mavx2` (and SSE4.2 TU with `-msse4.2`) as separate
   translation units; runtime dispatch selects. **aarch64: scalar fallback only in v0.1.0**
-  (resolved in grill-me — NEON deferred as a pure drop-in perf addition later; the dispatch
+  (resolved in grill-me -- NEON deferred as a pure drop-in perf addition later; the dispatch
   interface already isolates this with zero design impact).
 - Subdirs: `src/core`, `src/ui`, `src/helper`, `tests`. `enable_testing()`.
 - `CMakePresets.json`: `linux-gcc-debug`, `linux-gcc-release`, `linux-clang-release`,
   `linux-asan`.
 - `build.sh [debug|release|test|asan]` convenience wrapper (mirror `build.bat`).
 
-### 14.2 Packaging — AppImage
+### 14.2 Packaging -- AppImage
 - `packaging/appimage/build-appimage.sh` using **linuxdeploy** + `linuxdeploy-plugin-qt` to
   bundle Qt and produce `indexed-x86_64.AppImage`.
 - Include `indexed`, `indexed-helper`, `.desktop`, icon, AppStream `metainfo.xml`.
 - **Helper elevation inside AppImage:** ship the polkit policy and elevate via `pkexec`
-  (§9.2 — this is the only delivery path for v0.1.0). The AppImage's first privileged action
+  (§9.2 -- this is the only delivery path for v0.1.0). The AppImage's first privileged action
   prompts via polkit once per GUI session. A setcap-installed fast path for distro packages
   is explicitly deferred (no packaging target for it exists yet); revisit as a follow-on ADR
   if/when deb/rpm/AUR packaging is pursued.
 - `.desktop` file: `Name=indexed`, `Exec=indexed %f`, `Icon=indexed`, `Categories=Utility;System;FileTools;`,
   `Keywords=search;find;file;index;`.
 
-### 14.3 CI — `.github/workflows/ci.yml` (GitHub Actions, `ubuntu-latest`)
+### 14.3 CI -- `.github/workflows/ci.yml` (GitHub Actions, `ubuntu-latest`)
 Jobs (mirror winindex's structure):
-1. **lint** — install clang-format (matching `.clang-format`), fail on diff over `src/`.
-2. **build-debug** — cache FetchContent `_deps`; configure+build; `ctest --output-on-failure`.
-3. **build-release** — build; run tests with coverage (`-DCMAKE_CXX_FLAGS="--coverage"` +
+1. **lint** -- install clang-format (matching `.clang-format`), fail on diff over `src/`.
+2. **build-debug** -- cache FetchContent `_deps`; configure+build; `ctest --output-on-failure`.
+3. **build-release** -- build; run tests with coverage (`-DCMAKE_CXX_FLAGS="--coverage"` +
    `lcov`/`gcovr`), upload to Codecov.
-4. **build-asan** — `-DENABLE_ASAN=ON`, run tests with `ASAN_OPTIONS=halt_on_error=1`.
+4. **build-asan** -- `-DENABLE_ASAN=ON`, run tests with `ASAN_OPTIONS=halt_on_error=1`.
    Exclude tests that touch real mounts/OS state (mirror winindex excluding DriveEnumerator/Indexer).
-5. **release** (on `v*` tags) — build, produce the AppImage, attach to a GitHub Release via
+5. **release** (on `v*` tags) -- build, produce the AppImage, attach to a GitHub Release via
    `softprops/action-gh-release`.
 - Install Qt in CI via `install-qt-action` or distro packages (`qt6-base-dev`, `qt6-...`).
 - Add libblkid/libudev dev packages.
@@ -717,22 +720,22 @@ Jobs (mirror winindex's structure):
 - **Mocks** (`tests/mocks/`): `MockFileSystemScanner`, `MockIndexStore`, `MockChangeMonitor`
   (GoogleMock), so `Indexer` is tested without touching the real filesystem.
 - **Unit tests**, one per core module:
-  - `test_WalkScanner` — walk a temp dir tree (created in the test), assert entries, exclusions,
+  - `test_WalkScanner` -- walk a temp dir tree (created in the test), assert entries, exclusions,
     symlink skipping, mount-boundary behavior (best-effort).
-  - `test_Indexer` — drives mocks; verifies build→save→load, incremental add/remove, status
+  - `test_Indexer` -- drives mocks; verifies build→save→load, incremental add/remove, status
     callbacks, staleness logic.
-  - `test_IndexPool` — add entries, offsets, accessors, name/path split.
-  - `test_IndexSerializer` — round-trip, CRC validation, version/magic rejection, corruption
+  - `test_IndexPool` -- add entries, offsets, accessors, name/path split.
+  - `test_IndexSerializer` -- round-trip, CRC validation, version/magic rejection, corruption
     → rebuild.
-  - `test_SearchEngine` — substring, token-set (the `just rosy guitar` case →
+  - `test_SearchEngine` -- substring, token-set (the `just rosy guitar` case →
     `LedZep_Just-Rosy_June-Bug_guitar.flac`), regex, all option combinations, diacritics,
     result cap, cancellation.
-  - `test_TokenMatcher` — separators, tokenization, all-tokens-present.
-  - `test_Settings` / `test_IniFile` — round-trip, defaults, portable mode, list-separator
+  - `test_TokenMatcher` -- separators, tokenization, all-tokens-present.
+  - `test_Settings` / `test_IniFile` -- round-trip, defaults, portable mode, list-separator
     edge cases (paths containing the separator!).
-  - `test_MountEnumerator` — parse fixture `mountinfo` strings; classification.
-  - `test_PathUtils` — `FormatFileCount`, `FormatAge`, `FormatLocationList`, XDG resolution.
-  - `test_Elevation` — mocked filesystem proving `PKEXEC_UID` resolution, `O_NOFOLLOW`
+  - `test_MountEnumerator` -- parse fixture `mountinfo` strings; classification.
+  - `test_PathUtils` -- `FormatFileCount`, `FormatAge`, `FormatLocationList`, XDG resolution.
+  - `test_Elevation` -- mocked filesystem proving `PKEXEC_UID` resolution, `O_NOFOLLOW`
     symlink rejection, and ownership-check refusal on root-written output paths (§9.2). This
     is security-critical logic and needs explicit red/green coverage of the attack it closes.
 - **Coverage target:** meaningful-logic coverage in the core (winindex used Codecov; keep it).
@@ -753,78 +756,78 @@ Jobs (mirror winindex's structure):
 
 Each milestone should compile, pass tests, and be committed. TDD where practical.
 
-> **Progress tracker** (kept current as milestones land — check here before resuming
+> **Progress tracker** (kept current as milestones land -- check here before resuming
 > work in a fresh session): **M0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 ✅ · M6 ✅ (pending:
 > README screenshot, developer tags `v0.1.0` + pushes).**
 > See `CLAUDE.md` for the workflow conventions (TDD discipline, subagent parallelization,
 > verification requirements) that apply to every remaining milestone.
 
-1. **M0 — Scaffold. ✅ DONE.** Repo hygiene files, MIT LICENSE, top-level CMake, `core`/`ui`/
-   `helper`/`tests` skeletons (no `cli/` — CLI dropped), FetchContent (gtest/re2/absl/utf8proc),
+1. **M0 -- Scaffold. ✅ DONE.** Repo hygiene files, MIT LICENSE, top-level CMake, `core`/`ui`/
+   `helper`/`tests` skeletons (no `cli/` -- CLI dropped), FetchContent (gtest/re2/absl/utf8proc),
    Qt found, CI green on an empty build + one trivial test. `.desktop`/icon placeholder.
-2. **M1 — Core data model & storage. ✅ DONE.** `FileEntry`, `EntryMeta` (64-bit pool offsets),
+2. **M1 -- Core data model & storage. ✅ DONE.** `FileEntry`, `EntryMeta` (64-bit pool offsets),
    `IndexPool`, `IndexStore`, `IndexSerializer` (+ format v1), full unit tests + round-trip.
    No Qt.
-3. **M2 — Search engine. ✅ DONE.** `SearchEngine`, `SimdSearch` (scalar first, then AVX2/SSE4.2;
+3. **M2 -- Search engine. ✅ DONE.** `SearchEngine`, `SimdSearch` (scalar first, then AVX2/SSE4.2;
    aarch64 scalar-only for v0.1.0, NEON deferred), `TokenMatcher`, utf8proc
    case-fold/diacritics, `ISearchEngine`. Full unit tests (`test_SearchEngine`) reading a
-   hand-built index prove end-to-end search headless — no CLI needed for this.
-4. **M3 — Scanner & indexer. ✅ DONE.** `WalkScanner` (getdents64 + statx, parallel, exclusions,
+   hand-built index prove end-to-end search headless -- no CLI needed for this.
+4. **M3 -- Scanner & indexer. ✅ DONE.** `WalkScanner` (getdents64 + statx, parallel, exclusions,
    symlink/mount handling), `Indexer` orchestration (build/load/save/stale/incremental) with
    mocks. `MountEnumerator`. `Settings`/`IniFile`/`PathUtils`/`Logger` (newline-delimited
    path lists).
-5. **M4 — Qt GUI. ✅ DONE.** `MainWindow` (search box + debounce + min-2-chars, virtual `ResultModel`,
+5. **M4 -- Qt GUI. ✅ DONE.** `MainWindow` (search box + debounce + min-2-chars, virtual `ResultModel`,
    `ResultView` with Name/Path/Size/Date columns, sortable, status bar, menu bar, context
    menu), `SearchLineEdit` (Up/Down → list), open/reveal/copy/cut/trash/drag, First-Run &
    Settings dialogs, About. Wire to core. **Match the winindex screenshot layout** (§ below).
-6. **M5 — Live monitoring & privileged helper. ✅ DONE.** `InotifyWatcher` (unprivileged) first; then
+6. **M5 -- Live monitoring & privileged helper. ✅ DONE.** `InotifyWatcher` (unprivileged) first; then
    `FanotifyMonitor` (privileged) + the `indexed-helper` binary + pkexec/polkit elevation
    (session-lifetime, §9.2) + `PKEXEC_UID`-based root-write hardening (`test_Elevation`).
    Signals/status-file control channel (§9.3). GUI reloads index on `.idx` change. Hotplug
    via mountinfo poll.
-7. **M6 — Packaging & polish. ✅ DONE** (except the two developer-action items below).
+7. **M6 -- Packaging & polish. ✅ DONE** (except the two developer-action items below).
    AppImage build, AppStream metainfo, README, CHANGELOG, ADRs finalized, release CI job.
 
    > **M6 completion notes (2026-07-09):** packaging tree (`appimage/`, `icons/` incl. hicolor
    > sizes, `metainfo/`, `indexed.desktop`), rewritten README, CHANGELOG entries, and the CI
    > `release` job (AppImage-on-tag) all landed. `desktop-file-validate` and
-   > `appstreamcli validate` both pass. The AppImage builds and runs verified on this machine —
+   > `appstreamcli validate` both pass. The AppImage builds and runs verified on this machine --
    > note `build-appimage.sh` **must** fetch patchelf ≥ 0.19.1 (pinned in the script): both
    > linuxdeploy's bundled 0.15.0 *and* 0.18.0 silently corrupt every RELR-relocated library
    > (Fedora 40+/Ubuntu 24.04+ system libs), producing an AppImage that segfaults in random
    > library constructors at startup. The stale `build-asan` ctest exclusion was removed.
    > Still pending (developer actions): README screenshot (needs a real GUI session), and
-   > tagging `v0.1.0` + pushing — tagging is a git action requiring the developer's go-ahead,
+   > tagging `v0.1.0` + pushing -- tagging is a git action requiring the developer's go-ahead,
    > not done unilaterally. Second-distro validation (Ubuntu, §20) still outstanding.
 
 ---
 
-## 17. Risks (resolved in grill-me — see `docs/adr/` for the structural ones)
+## 17. Risks (resolved in grill-me -- see `docs/adr/` for the structural ones)
 
-1. **No fanotify replay** — index drift across downtime; rescan-if-stale is the mitigation,
+1. **No fanotify replay** -- index drift across downtime; rescan-if-stale is the mitigation,
    accepted as-is. Compounded by the session-lifetime helper (§9.2): a fresh GUI session
    always re-evaluates staleness, so this is the *only* place drift can occur, not an
    additional gap. (§8)
-2. **Root-helper output-path safety** — the AppImage helper runs as root and must write into
+2. **Root-helper output-path safety** -- the AppImage helper runs as root and must write into
    an unprivileged user's XDG dirs without being tricked via symlink or spoofed env vars.
    **Resolved:** `PKEXEC_UID` + `getpwuid()` for target-user resolution, `O_NOFOLLOW` +
    ownership checks on every root-written path, covered by `test_Elevation`. (§9.2)
 3. **inotify watch-count ceiling** on large trees when unprivileged. Fallback (interval
    rescan + status-bar notice) accepted as-is; this only bites users who decline the pkexec
    prompt, since the primary path (fanotify via the helper) has no per-directory watch limit.
-4. **No true MFT-speed cold scan** — honest performance expectations; don't over-promise. (§7.1)
-5. **Multi-user / permission filtering** — privileged indexer sees everything; single-user
+4. **No true MFT-speed cold scan** -- honest performance expectations; don't over-promise. (§7.1)
+5. **Multi-user / permission filtering** -- privileged indexer sees everything; single-user
    trust model. Out of scope, stated explicitly in the README. (§2)
-6. **List-separator ambiguity** — **resolved:** newline-delimited, reject paths containing a
+6. **List-separator ambiguity** -- **resolved:** newline-delimited, reject paths containing a
    literal `\n` at save time. (§12.1)
-7. **`EntryMeta` field widths** — **resolved:** 64-bit pool offsets, `uint32_t` lengths,
+7. **`EntryMeta` field widths** -- **resolved:** 64-bit pool offsets, `uint32_t` lengths,
    `uint16_t nameStart`; `static_assert` + round-trip test required in `test_IndexPool`. (§7.3)
-8. **Qt licensing** — dynamic-link LGPL Qt to stay MIT-clean; AppImage bundles Qt `.so`s
+8. **Qt licensing** -- dynamic-link LGPL Qt to stay MIT-clean; AppImage bundles Qt `.so`s
    (LGPL-compliant with relinkability). Confirmed as drafted.
-9. **Wayland vs X11** — **resolved:** test against XFCE (X11) + GNOME (Wayland); reveal
+9. **Wayland vs X11** -- **resolved:** test against XFCE (X11) + GNOME (Wayland); reveal
    falls back to `xdg-open <parent-dir>` whenever the `FileManager1` D-Bus call fails
    (covers both "no such interface" and "no D-Bus session").
-10. **Time epoch consistency** — **resolved:** nanoseconds since the Unix epoch
+10. **Time epoch consistency** -- **resolved:** nanoseconds since the Unix epoch
     (`CLOCK_REALTIME`-derived) everywhere; assert in tests.
 
 ---
@@ -836,31 +839,31 @@ interview before implementation began. Structural decisions are additionally rec
 ADRs in `docs/adr/`; the rest are folded directly into the relevant section above.
 
 1. **Helper delivery:** pkexec-on-demand is the *sole* v0.1.0 path (not systemd, not
-   setcap) — see `docs/adr/0008-privileged-helper-and-elevation.md`. Setcap deferred until
+   setcap) -- see `docs/adr/0008-privileged-helper-and-elevation.md`. Setcap deferred until
    distro packaging is actually pursued.
 2. **Helper lifecycle:** tied to the GUI session (launched once via pkexec, holds the
-   fanotify monitor, `SIGTERM` on GUI exit) — not a systemd-style always-on service.
+   fanotify monitor, `SIGTERM` on GUI exit) -- not a systemd-style always-on service.
 3. **GUI↔helper channel:** Unix signals (`SIGHUP`/`SIGUSR1`/`SIGTERM`) + a shared status
-   file for progress; `.idx` itself stays whole-file-reload, not a delta protocol — see
+   file for progress; `.idx` itself stays whole-file-reload, not a delta protocol -- see
    `docs/adr/0007-fanotify-vs-inotify-monitoring.md`.
 4. **List separator:** newline-delimited for `SelectedRoots`/`ExcludedPaths` (§12.1).
 5. **Default excluded paths:** confirmed §12.3 list plus `~/.local/share/containers` and
    `~/.var/app`, added during grill-me.
-6. **CLI:** dropped entirely — `indexed` is GUI-only (§2). No `-q/--query`, no `src/cli/`.
+6. **CLI:** dropped entirely -- `indexed` is GUI-only (§2). No `-q/--query`, no `src/cli/`.
 7. **LICENSE:** MIT, copyright **Rajesh Subramanian** (no contact info), version `0.1.0`.
 8. **Minimum kernel:** 5.4 floor to run at all; 5.9 for full fanotify whole-mount
    monitoring; inotify fallback below that.
 9. **aarch64:** scalar-only in v0.1.0; NEON deferred as a drop-in perf addition.
-10. **On-disk index format:** 64-bit pool offsets — see
+10. **On-disk index format:** 64-bit pool offsets -- see
     `docs/adr/0006-pool-based-index-layout.md`.
 11. **Root-helper hardening:** `PKEXEC_UID` + `getpwuid()` + `O_NOFOLLOW` + ownership
-    checks — see `docs/adr/0008-privileged-helper-and-elevation.md`.
+    checks -- see `docs/adr/0008-privileged-helper-and-elevation.md`.
 12. **Wayland test target:** GNOME, with `xdg-open` fallback for reveal-in-folder.
 13. **Timestamp epoch:** nanoseconds since Unix epoch, everywhere.
 
 ---
 
-## 19. UI Reference — reproduce the winindex layout in Qt
+## 19. UI Reference -- reproduce the winindex layout in Qt
 
 Match the reference screenshot (`/home/rajesh/projects/winindex/src/ui/assets/screenshot.png`):
 
@@ -880,20 +883,20 @@ Match the reference screenshot (`/home/rajesh/projects/winindex/src/ui/assets/sc
   2 hrs old"). Indexing progress messages during scan.
 - **Menus:**
   - **Search:** Regular Expression (Alt+1), Case Sensitive (Alt+2), Whole Word (Alt+3),
-    Match Path (Alt+4), Ignore Diacritics (Alt+5) — checkable, disabled until an index exists.
-  - **Index:** Rebuild Index Now · —— · Settings…
-  - **Help:** Open Log File · —— · About indexed…
-- **Context menu (right-click a result):** Open · Open Containing Folder · —— · Copy Full Path ·
+    Match Path (Alt+4), Ignore Diacritics (Alt+5) -- checkable, disabled until an index exists.
+  - **Index:** Rebuild Index Now · (separator) · Settings…
+  - **Help:** Open Log File · (separator) · About indexed…
+- **Context menu (right-click a result):** Open · Open Containing Folder · (separator) · Copy Full Path ·
   Copy Filename. (Open disabled for multi-selection.) Cut/Delete available via keyboard;
   optionally add to context menu too.
-- **First-Run dialog:** "indexed — First Run Setup". Multi-select list of mounts to index
+- **First-Run dialog:** "indexed -- First Run Setup". Multi-select list of mounts to index
   (pre-select the mount containing `$HOME` and `/`); **Automatic Reindex** group ("Manual only"
   checkbox + interval spinbox + Hours/Days combo, default 48 Hours); **Excluded folders** list
   with Add…/Remove (folder picker); OK/Cancel.
-- **Settings dialog:** "indexed — Settings". **Paths to index** list + Add Location…/Remove;
+- **Settings dialog:** "indexed -- Settings". **Paths to index** list + Add Location…/Remove;
   same Automatic Reindex group; **Excluded folders** list + Add…/Remove; OK/Cancel. On OK,
   diff old vs new roots → incremental `IndexPaths`/`RemovePaths` or full rebuild (both changed).
-- **About:** "indexed v0.1.0 — Blazingly fast Linux file search and indexer." with a clickable
+- **About:** "indexed v0.1.0 -- Blazingly fast Linux file search and indexer." with a clickable
   link to https://github.com/rajeshsub/indexed.
 - **Behaviors to preserve:** 150 ms debounce; background search thread posts results to the UI
   thread; auto-focus search box after indexing completes; if a selected file no longer exists

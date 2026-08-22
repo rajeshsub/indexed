@@ -527,7 +527,7 @@ void MainWindow::StartHotplugWatcher() {
                     [&](const MountInfo& p) { return p.mountPoint == mount.mountPoint; });
                 if (!existed) {
                     const QString msg =
-                        tr("Filesystem %1 mounted — add it in Settings to index it.")
+                        tr("Filesystem %1 mounted -- add it in Settings to index it.")
                             .arg(QString::fromStdString(mount.mountPoint));
                     QMetaObject::invokeMethod(
                         this, [this, msg]() { statusBar()->showMessage(msg, 8000); },

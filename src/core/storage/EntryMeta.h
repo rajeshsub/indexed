@@ -23,6 +23,6 @@ struct EntryMeta {
 };
 
 static_assert(sizeof(EntryMeta) == 48,
-              "EntryMeta layout changed — bump indexed.idx format version");
+              "EntryMeta layout changed -- bump indexed.idx format version");
 
 }  // namespace indexed
