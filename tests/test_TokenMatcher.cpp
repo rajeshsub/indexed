@@ -9,6 +9,7 @@
 
 using indexed::MatchesAllTokens;
 using indexed::Tokenize;
+using indexed::TokenizeInto;
 
 namespace {
 
@@ -116,4 +117,33 @@ TEST(TokenMatcher, MatchesAllTokensDuplicateQueryTokenMatchesSingleOccurrence) {
     std::vector<std::string_view> queryTokens = Tokenize("guitar guitar");
 
     EXPECT_TRUE(MatchesAllTokens(queryTokens, nameTokens));
+}
+
+TEST(TokenMatcher, TokenizeIntoMatchesTokenizeOnSameInput) {
+    std::vector<std::string_view> out;
+    TokenizeInto("ledzep_just-rosy_june-bug_guitar.flac", out);
+
+    EXPECT_EQ(out, Tokenize("ledzep_just-rosy_june-bug_guitar.flac"));
+}
+
+TEST(TokenMatcher, TokenizeIntoClearsPriorContentsBeforeAppending) {
+    std::vector<std::string_view> out;
+    TokenizeInto("aaaa bbbb cccc", out);
+    ASSERT_EQ(out.size(), 3u);
+
+    // Reused buffer with a shorter second input must not retain stale
+    // tokens from the first call.
+    TokenizeInto("solo", out);
+
+    EXPECT_EQ(out, std::vector<std::string_view>({"solo"}));
+}
+
+TEST(TokenMatcher, TokenizeIntoEmptyInputClearsOutToEmpty) {
+    std::vector<std::string_view> out;
+    TokenizeInto("a b", out);
+    ASSERT_FALSE(out.empty());
+
+    TokenizeInto("", out);
+
+    EXPECT_TRUE(out.empty());
 }

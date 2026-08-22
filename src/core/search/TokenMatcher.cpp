@@ -14,13 +14,19 @@ namespace indexed {
 
 std::vector<std::string_view> Tokenize(std::string_view text) {
     std::vector<std::string_view> tokens;
+    TokenizeInto(text, tokens);
+    return tokens;
+}
+
+void TokenizeInto(std::string_view text, std::vector<std::string_view>& out) {
+    out.clear();
 
     size_t tokenStart = 0;
     bool inToken = false;
     for (size_t i = 0; i < text.size(); ++i) {
         if (IsSeparator(text[i])) {
             if (inToken) {
-                tokens.push_back(text.substr(tokenStart, i - tokenStart));
+                out.push_back(text.substr(tokenStart, i - tokenStart));
                 inToken = false;
             }
         } else if (!inToken) {
@@ -29,10 +35,8 @@ std::vector<std::string_view> Tokenize(std::string_view text) {
         }
     }
     if (inToken) {
-        tokens.push_back(text.substr(tokenStart, text.size() - tokenStart));
+        out.push_back(text.substr(tokenStart, text.size() - tokenStart));
     }
-
-    return tokens;
 }
 
 bool MatchesAllTokens(const std::vector<std::string_view>& queryTokens,

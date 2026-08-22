@@ -122,6 +122,11 @@ std::vector<SearchResult> SearchEngine::Search(const IndexPool& pool, std::strin
         }
     }
 
+    // Reused across every entry in token mode so TokenizeInto only allocates
+    // while this buffer is still growing to its steady-state token count,
+    // instead of once per entry (this loop runs over the whole pool).
+    std::vector<std::string_view> nameTokensBuf;
+
     for (size_t i = 0; i < pool.Count(); ++i) {
         if (cancelToken.load(std::memory_order_relaxed)) {
             break;
@@ -148,8 +153,8 @@ std::vector<SearchResult> SearchEngine::Search(const IndexPool& pool, std::strin
             std::string_view subject = GetSearchTarget(entry, options, scratch);
 
             if (tokenMode) {
-                std::vector<std::string_view> nameTokens = Tokenize(subject);
-                if (MatchesAllTokens(queryTokens, nameTokens)) {
+                TokenizeInto(subject, nameTokensBuf);
+                if (MatchesAllTokens(queryTokens, nameTokensBuf)) {
                     SearchResult result;
                     result.entryIndex = i;
                     if (!queryTokens.empty()) {

@@ -924,3 +924,18 @@ Match the reference screenshot (`/home/rajesh/projects/winindex/src/ui/assets/sc
   produces a working AppImage attached to a GitHub Release.
 - README (with screenshot), CHANGELOG, ADRs, and MIT LICENSE are in place.
 ```
+
+---
+
+## 21. Follow-ups / Deferred Optimizations
+
+Not scoped to a milestone -- pick up opportunistically or when profiling motivates it.
+
+1. **SIMD/RE2 tuning for `TokenSetSearch`/`RegexSearch`.** Benchmarked 2026-08-23:
+   `BM_SubstringSearch` (SIMD-accelerated, §7.4) runs ~50-120M items/sec; `BM_TokenSetSearch`
+   and `BM_RegexSearch` trail well behind it (`BM_TokenSetSearch` ~18-24M items/sec after the
+   `TokenizeInto` allocation fix below; `BM_RegexSearch` ~8-11M items/sec, untouched). Candidate
+   work: route `TokenMatcher`'s per-token substring check through `SimdSearch::FindSubstring`
+   instead of `std::string_view::find`, and profile whether RE2 call overhead or the regex
+   pattern itself dominates `BM_RegexSearch`. Needs the differential-testing rigor CLAUDE.md
+   requires for hot-path algorithmic code before landing.

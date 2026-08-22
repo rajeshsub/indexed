@@ -13,6 +13,13 @@ namespace indexed {
 // Empty input produces zero tokens.
 std::vector<std::string_view> Tokenize(std::string_view text);
 
+// Same splitting rules as Tokenize(), but writes into `out` instead of
+// returning a new vector: out.clear()s first, then appends -- out's
+// existing capacity is reused, so calling this repeatedly on the same `out`
+// (e.g. once per entry in a search loop) allocates only while `out` is
+// still growing to its steady-state token count, not on every call.
+void TokenizeInto(std::string_view text, std::vector<std::string_view>& out);
+
 // True if every token in queryTokens is a substring of at least one token in
 // nameTokens (order-independent -- queryTokens need not appear in the same
 // order they occur in nameTokens). Substring, not exact equality, is what

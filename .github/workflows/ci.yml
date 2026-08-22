@@ -187,6 +187,36 @@ jobs:
           build/release/benchmarks/bench_SearchEngine --benchmark_out=benchmark-results/SearchEngine.json --benchmark_out_format=json
           build/release/benchmarks/bench_WalkScanner --benchmark_out=benchmark-results/WalkScanner.json --benchmark_out_format=json
 
+      # Renders both JSON result files as markdown tables directly in the job
+      # summary -- readable without expanding the "Run benchmarks" step log.
+      - name: Write benchmark results to job summary
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import json
+
+          def render(title, path):
+              with open(path) as f:
+                  data = json.load(f)
+              print(f"## {title}\n")
+              print("| Benchmark | Time | CPU | Iterations | Items/sec |")
+              print("|---|---|---|---|---|")
+              for b in data["benchmarks"]:
+                  if b.get("run_type") == "aggregate":
+                      continue
+                  name = b["name"]
+                  unit = b.get("time_unit", "ns")
+                  time = f"{b['real_time']:.0f} {unit}"
+                  cpu = f"{b['cpu_time']:.0f} {unit}"
+                  iters = f"{b['iterations']:,}"
+                  ips = b.get("items_per_second")
+                  ips_str = f"{ips / 1e6:.2f}M/s" if ips else "-"
+                  print(f"| {name} | {time} | {cpu} | {iters} | {ips_str} |")
+              print()
+
+          render("SearchEngine", "benchmark-results/SearchEngine.json")
+          render("WalkScanner", "benchmark-results/WalkScanner.json")
+          EOF
+
       # Historical series persisted via cache (no gh-pages write needed);
       # renders a trend chart into the job summary each run (rule 25).
       - name: Cache benchmark history
