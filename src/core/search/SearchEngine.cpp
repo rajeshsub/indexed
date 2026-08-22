@@ -140,20 +140,44 @@ std::vector<SearchResult> SearchEngine::Search(const IndexPool& pool, std::strin
         if (options.useRegex) {
             std::string_view subject = options.matchPath ? entry.path : entry.name;
             absl::string_view piece(subject.data(), subject.size());
-            absl::string_view match;
-            if (RE2::PartialMatch(piece, *regex, &match)) {
-                SearchResult result;
-                result.entryIndex = i;
-                result.matchStart = static_cast<size_t>(match.data() - subject.data());
-                result.matchLen = match.size();
-                results.push_back(result);
+            // Boolean-only filter first: RE2 skips submatch tracking (and
+            // the slower NFA/one-pass/bitstate machinery it requires) when
+            // no output Arg is requested, taking the pure-DFA path instead
+            // (re2.cc: "Don't ask for the location if we won't use it").
+            // Most entries don't match, so only the entries that DO --
+            // via the capturing call below -- pay full submatch-tracking
+            // cost.
+            if (!RE2::PartialMatch(piece, *regex)) {
+                continue;
             }
+            absl::string_view match;
+            if (!RE2::PartialMatch(piece, *regex, &match)) {
+                continue;
+            }
+            SearchResult result;
+            result.entryIndex = i;
+            result.matchStart = static_cast<size_t>(match.data() - subject.data());
+            result.matchLen = match.size();
+            results.push_back(result);
         } else {
             std::string scratch;
             std::string_view subject = GetSearchTarget(entry, options, scratch);
 
             if (tokenMode) {
-                TokenizeInto(subject, nameTokensBuf);
+                // Cached name-token spans (docs/adr/0012) cover the common
+                // case (name-target search, either case mode -- CaseFoldAscii
+                // preserves byte length/position and never touches separator
+                // chars, so nameLower-computed offsets apply unchanged to
+                // entry.name too). matchPath/ignoreDiacritics fall back to
+                // live tokenizing: no path-token cache exists (ADR-0006's
+                // pathLower deferral), and diacritics-folding can change
+                // byte length/positions so cached name-offsets don't
+                // transfer.
+                if (!options.matchPath && !options.ignoreDiacritics) {
+                    ApplyTokenSpans(subject, entry.nameTokenSpans, nameTokensBuf);
+                } else {
+                    TokenizeInto(subject, nameTokensBuf);
+                }
                 if (MatchesAllTokens(queryTokens, nameTokensBuf)) {
                     SearchResult result;
                     result.entryIndex = i;

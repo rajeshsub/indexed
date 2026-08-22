@@ -2,9 +2,13 @@
 
 #include "indexer/IFileSystemScanner.h"
 #include "storage/IndexPool.h"
+#include <vector>
 
+using indexed::ApplyTokenSpans;
 using indexed::FileEntry;
 using indexed::IndexPool;
+using indexed::TokenizeToSpans;
+using indexed::TokenSpan;
 
 namespace {
 
@@ -115,4 +119,78 @@ TEST(IndexPool, LoadFromPathPoolRebuildsNameLowerAndAllFields) {
     EXPECT_EQ(e1.name, "Beta.log");
     EXPECT_EQ(e1.nameLower, "beta.log");
     EXPECT_EQ(e1.path, "/x/y/Beta.log");
+}
+
+TEST(TokenSpanFreeFunctions, ApplyTokenSpansSlicesTextInOrder) {
+    std::vector<TokenSpan> spans = {{0, 4}, {5, 4}};
+    std::vector<std::string_view> out;
+
+    ApplyTokenSpans("just rosy", spans, out);
+
+    EXPECT_EQ(out, std::vector<std::string_view>({"just", "rosy"}));
+}
+
+TEST(TokenSpanFreeFunctions, ApplyTokenSpansClearsPriorOutContentsFirst) {
+    std::vector<std::string_view> out;
+    ApplyTokenSpans("aaaa bbbb", std::vector<TokenSpan>{{0, 4}, {5, 4}}, out);
+    ASSERT_EQ(out.size(), 2u);
+
+    ApplyTokenSpans("solo", std::vector<TokenSpan>{{0, 4}}, out);
+
+    EXPECT_EQ(out, std::vector<std::string_view>({"solo"}));
+}
+
+TEST(IndexPool, AddEntrySpansSliceNameLowerIntoTheSameTokensAsTokenize) {
+    IndexPool pool;
+    pool.AddEntry(MakeEntry("LedZep_Just-Rosy.flac", "/x/LedZep_Just-Rosy.flac", 1, 1));
+
+    auto entry = pool.GetEntry(0);
+    std::vector<std::string_view> tokens;
+    ApplyTokenSpans(entry.nameLower, entry.nameTokenSpans, tokens);
+
+    EXPECT_EQ(tokens, std::vector<std::string_view>({"ledzep", "just", "rosy", "flac"}));
+}
+
+TEST(IndexPool, AddEntrySpansAlsoSliceOriginalCaseNameCorrectly) {
+    // CaseFoldAscii is byte-length/position-preserving and never touches
+    // separator chars, so nameLower-computed offsets must transfer
+    // unchanged onto entry.name (docs/adr/0012).
+    IndexPool pool;
+    pool.AddEntry(MakeEntry("LedZep_Just-Rosy.flac", "/x/LedZep_Just-Rosy.flac", 1, 1));
+
+    auto entry = pool.GetEntry(0);
+    std::vector<std::string_view> tokens;
+    ApplyTokenSpans(entry.name, entry.nameTokenSpans, tokens);
+
+    EXPECT_EQ(tokens, std::vector<std::string_view>({"LedZep", "Just", "Rosy", "flac"}));
+}
+
+TEST(IndexPool, AddEntryNameWithNoSeparatorsProducesOneSpanCoveringWholeName) {
+    IndexPool pool;
+    pool.AddEntry(MakeEntry("guitar", "/x/guitar", 1, 1));
+
+    EXPECT_EQ(pool.GetEntry(0).nameTokenSpans.size(), 1u);
+}
+
+TEST(IndexPool, AddEntrySeparatorsOnlyNameProducesZeroSpans) {
+    IndexPool pool;
+    pool.AddEntry(MakeEntry("___", "/x/___", 1, 1));
+
+    EXPECT_EQ(pool.GetEntry(0).nameTokenSpans.size(), 0u);
+}
+
+TEST(IndexPool, LoadFromPathPoolRebuildsNameTokenSpansIdenticallyToAddEntry) {
+    IndexPool original;
+    original.AddEntry(MakeEntry("LedZep_Just-Rosy.flac", "/x/LedZep_Just-Rosy.flac", 1, 1));
+
+    IndexPool reloaded = IndexPool::LoadFromPathPool(original.Meta(), original.PathPool());
+
+    auto originalEntry = original.GetEntry(0);
+    auto reloadedEntry = reloaded.GetEntry(0);
+    std::vector<std::string_view> originalTokens;
+    std::vector<std::string_view> reloadedTokens;
+    ApplyTokenSpans(originalEntry.nameLower, originalEntry.nameTokenSpans, originalTokens);
+    ApplyTokenSpans(reloadedEntry.nameLower, reloadedEntry.nameTokenSpans, reloadedTokens);
+
+    EXPECT_EQ(reloadedTokens, originalTokens);
 }

@@ -2,8 +2,52 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
 
 namespace indexed {
+
+bool operator==(const TokenSpan& a, const TokenSpan& b) {
+    return a.offset == b.offset && a.length == b.length;
+}
+
+namespace {
+bool IsSeparator(char c) {
+    return c == ' ' || c == '_' || c == '-' || c == '.';
+}
+}  // namespace
+
+std::vector<TokenSpan> TokenizeToSpans(std::string_view text) {
+    std::vector<TokenSpan> spans;
+
+    size_t tokenStart = 0;
+    bool inToken = false;
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (IsSeparator(text[i])) {
+            if (inToken) {
+                spans.push_back(TokenSpan{static_cast<uint32_t>(tokenStart),
+                                          static_cast<uint32_t>(i - tokenStart)});
+                inToken = false;
+            }
+        } else if (!inToken) {
+            tokenStart = i;
+            inToken = true;
+        }
+    }
+    if (inToken) {
+        spans.push_back(TokenSpan{static_cast<uint32_t>(tokenStart),
+                                  static_cast<uint32_t>(text.size() - tokenStart)});
+    }
+
+    return spans;
+}
+
+void ApplyTokenSpans(std::string_view text, std::span<const TokenSpan> spans,
+                     std::vector<std::string_view>& out) {
+    out.clear();
+    out.reserve(spans.size());
+    std::transform(spans.begin(), spans.end(), std::back_inserter(out),
+                   [text](const TokenSpan& span) { return text.substr(span.offset, span.length); });
+}
 
 std::string CaseFoldAscii(std::string_view text) {
     std::string result(text);
@@ -32,6 +76,14 @@ void IndexPool::AddEntry(const FileEntry& entry) {
     meta.nameLowerLen = static_cast<uint32_t>(nameLower.size());
     nameLowerPool_.insert(nameLowerPool_.end(), nameLower.begin(), nameLower.end());
 
+    std::vector<TokenSpan> spans = TokenizeToSpans(nameLower);
+    nameTokenStart_.push_back(static_cast<uint32_t>(nameTokenSpans_.size()));
+    // A name can't have more separator-delimited tokens than it has bytes;
+    // uint16_t is the same "a filename component is bounded" assumption
+    // ADR-0006 already makes for nameStart.
+    nameTokenCount_.push_back(static_cast<uint16_t>(spans.size()));
+    nameTokenSpans_.insert(nameTokenSpans_.end(), spans.begin(), spans.end());
+
     meta_.push_back(meta);
 }
 
@@ -49,6 +101,8 @@ IndexPool::EntryView IndexPool::GetEntry(size_t index) const {
     view.size = meta.size;
     view.lastModified = meta.lastModified;
     view.attributes = meta.attributes;
+    view.nameTokenSpans = std::span<const TokenSpan>(
+        nameTokenSpans_.data() + nameTokenStart_[index], nameTokenCount_[index]);
     return view;
 }
 
@@ -101,6 +155,11 @@ IndexPool IndexPool::LoadFromPathPool(std::vector<EntryMeta> meta, std::vector<c
         m.nameLowerOffset = pool.nameLowerPool_.size();
         m.nameLowerLen = static_cast<uint32_t>(nameLower.size());
         pool.nameLowerPool_.insert(pool.nameLowerPool_.end(), nameLower.begin(), nameLower.end());
+
+        std::vector<TokenSpan> spans = TokenizeToSpans(nameLower);
+        pool.nameTokenStart_.push_back(static_cast<uint32_t>(pool.nameTokenSpans_.size()));
+        pool.nameTokenCount_.push_back(static_cast<uint16_t>(spans.size()));
+        pool.nameTokenSpans_.insert(pool.nameTokenSpans_.end(), spans.begin(), spans.end());
     }
     return pool;
 }
