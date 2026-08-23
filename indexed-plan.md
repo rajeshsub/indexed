@@ -758,7 +758,7 @@ Each milestone should compile, pass tests, and be committed. TDD where practical
 
 > **Progress tracker** (kept current as milestones land -- check here before resuming
 > work in a fresh session): **M0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 ✅ · M6 ✅ (pending:
-> README screenshot, developer tags `v0.1.0` + pushes).**
+> developer tags `v0.1.0` + pushes).**
 > See `CLAUDE.md` for the workflow conventions (TDD discipline, subagent parallelization,
 > verification requirements) that apply to every remaining milestone.
 
@@ -798,7 +798,7 @@ Each milestone should compile, pass tests, and be committed. TDD where practical
    > library constructors at startup. The stale `build-asan` ctest exclusion was removed.
    > Still pending (developer actions): README screenshot (needs a real GUI session), and
    > tagging `v0.1.0` + pushing -- tagging is a git action requiring the developer's go-ahead,
-   > not done unilaterally. Second-distro validation (Ubuntu, §20) still outstanding.
+   > not done unilaterally.
 
 ---
 
@@ -910,8 +910,8 @@ Match the reference screenshot (`/home/rajesh/projects/winindex/src/ui/assets/sc
 `indexed` v0.1.0 is complete when:
 - All winindex features in the §5 mapping table are implemented (or explicitly deferred with an
   ADR).
-- `indexed` launches on Fedora XFCE **and** at least one other distro (Ubuntu), indexes the
-  selected roots, and returns live-filtered results matching the winindex UX.
+- `indexed` launches on Fedora XFCE, indexes the selected roots, and returns live-filtered
+  results matching the winindex UX.
 - Substring, token-set, regex, and all five option toggles work, proven via
   `test_SearchEngine` unit tests loading a hand-built index (no CLI in v0.1.0).
 - Live monitoring keeps results current (fanotify when privileged, inotify otherwise); hotplug
@@ -923,6 +923,9 @@ Match the reference screenshot (`/home/rajesh/projects/winindex/src/ui/assets/sc
 - `ctest` is green; ASAN clean; CI (lint + build + test + coverage) passes; a tagged build
   produces a working AppImage attached to a GitHub Release.
 - README (with screenshot), CHANGELOG, ADRs, and MIT LICENSE are in place.
+- README states the actual platform-testing scope honestly (Fedora XFCE only -- solo side
+  project, not validated elsewhere, believed-portable but untested on other distros, issues
+  welcome) rather than implying broader distro validation than was actually done.
 ```
 
 ---
@@ -931,11 +934,29 @@ Match the reference screenshot (`/home/rajesh/projects/winindex/src/ui/assets/sc
 
 Not scoped to a milestone -- pick up opportunistically or when profiling motivates it.
 
-1. **SIMD/RE2 tuning for `TokenSetSearch`/`RegexSearch`.** Benchmarked 2026-08-23:
-   `BM_SubstringSearch` (SIMD-accelerated, §7.4) runs ~50-120M items/sec; `BM_TokenSetSearch`
-   and `BM_RegexSearch` trail well behind it (`BM_TokenSetSearch` ~18-24M items/sec after the
-   `TokenizeInto` allocation fix below; `BM_RegexSearch` ~8-11M items/sec, untouched). Candidate
-   work: route `TokenMatcher`'s per-token substring check through `SimdSearch::FindSubstring`
-   instead of `std::string_view::find`, and profile whether RE2 call overhead or the regex
-   pattern itself dominates `BM_RegexSearch`. Needs the differential-testing rigor CLAUDE.md
-   requires for hot-path algorithmic code before landing.
+1. **~~SIMD/RE2 tuning for `TokenSetSearch`/`RegexSearch`.~~ DONE 2026-08-23.**
+   `RegexSearch`: two-phase RE2 matching (boolean-only `PartialMatch` filters every entry via
+   RE2's fast DFA-only path; only entries that pass pay the slower capturing call) --
+   ~1.75-1.8x at 100k/1M-entry scale. `TokenSetSearch`: per-entry name-token spans cached in
+   `IndexPool` (`docs/adr/0012-cached-name-token-spans.md`) instead of re-tokenizing every
+   entry on every search -- ~1.75x at 1M-entry scale (git-stash-isolated before/after
+   benchmarks; the 100k tier stayed too noisy across repeated attempts to trust a number,
+   reported as inconclusive rather than guessed at). `BM_SubstringSearch` (SIMD-accelerated,
+   §7.4) is still meaningfully ahead of both at ~50-120M items/sec -- a further SIMD pass on
+   `TokenMatcher`'s per-token substring check is a candidate if profiling later shows the
+   `MatchesAllTokens` nested loop (not tokenization) as the remaining bottleneck, but nothing
+   currently motivates it.
+2. **~~`InotifyWatcher` test flakiness in this dev environment.~~ ROOT-CAUSED 2026-08-23,
+   not a code bug.** 5 of 8 `InotifyWatcher` tests intermittently failed on this machine,
+   each timing out after ~8s waiting for a real inotify kernel event. Confirmed unrelated to
+   the same-day search-perf changes (`git stash` reproduced it on unmodified code too).
+   Isolated via a standalone single-process inotify probe (works instantly) and a
+   same-process multi-threaded probe mirroring `InotifyWatcher`'s exact
+   poll-thread-plus-main-thread-mutates structure (also works instantly) -- both ruled out a
+   sandbox/kernel inotify delivery problem. Root cause: this dev machine was under heavy
+   unrelated background load at the time (load average 12+ on 16 cores, from other
+   in-progress Gradle/Kotlin builds and browser tabs), starving the watcher thread past the
+   tests' timeouts (`WaitUntilWatcherReady`'s 5s ceiling, `WaitFor`'s 2s default). Re-run
+   against the unmodified code under normal load (0.6-0.9): 24/24 passes across 3 repeated
+   full-suite runs. No code change made or needed -- bumping timeouts to paper over
+   contention from unrelated processes would be solving the wrong problem.

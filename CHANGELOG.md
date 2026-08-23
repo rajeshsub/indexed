@@ -29,7 +29,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   fetches patchelf 0.19.1 and points linuxdeploy at it via `$PATCHELF`.
 - `packaging/indexed.desktop` no longer lists two main XDG menu categories.
 
+### Changed
+- RegexSearch: two-phase RE2 matching -- a cheap boolean-only `PartialMatch` filters every
+  entry first (RE2 takes its fast DFA-only path when no output is requested), and only
+  entries that pass pay the slower capturing call to extract the match span. ~1.75-1.8x
+  throughput at 100k/1M-entry scale.
+- TokenSetSearch: name-token spans are now cached in `IndexPool` at index-build/load time
+  instead of being re-tokenized on every search (`docs/adr/0012-cached-name-token-spans.md`).
+  ~1.75x throughput at 1M-entry scale; `matchPath`/`ignoreDiacritics` searches are unaffected
+  (still live-tokenized, as before).
+
 ### Added
+- CI: benchmark results are now rendered as a markdown table directly in the job summary,
+  readable without expanding the "Run benchmarks" step log.
 - Packaging: AppStream metainfo, app icon set (`packaging/icons/`), AppImage build
   script (`packaging/appimage/build-appimage.sh`, linuxdeploy + linuxdeploy-plugin-qt),
   CI `release` job that builds and attaches the AppImage to a GitHub Release on `v*`

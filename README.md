@@ -165,6 +165,12 @@ rm -rf squashfs-root
 Third-party dependencies (**re2**, **abseil**, **utf8proc**, **GoogleTest**) are fetched
 automatically by CMake's `FetchContent` -- no manual installation needed.
 
+**Platform testing:** this is a solo side project, and Fedora (XFCE) is the only distro
+it's actually been run on. There's nothing Fedora-specific in the code, and it's reasonably
+expected to work on other mainstream distros (Ubuntu, Arch, openSUSE, etc.), but that's
+untested, not verified. If you hit an issue on another distro,
+[open an issue](https://github.com/rajeshsub/indexed/issues) -- happy to fix it.
+
 ### Quick build
 
 ```bash

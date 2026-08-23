@@ -226,6 +226,66 @@ jobs:
           key: benchmark-history-${{ github.run_id }}
           restore-keys: benchmark-history-
 
+      # Reads ./benchmark-history/*.json BEFORE the "Track ... trend" steps
+      # below append this run's data point to those same files, so this
+      # sees only the previous run's data -- the delta baseline (rule 25:
+      # regressions visible without manual digging). External-data-json-path
+      # schema verified against the pinned action's own source
+      # (src/write.ts DataJson/BenchmarkSuites, src/extract.ts Benchmark):
+      # {entries: {<name>: [{commit, date, tool, benches: [{name, value, unit}]}]}},
+      # most-recent-run last.
+      - name: Compare benchmark results with previous run
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import json
+
+          def load_previous(history_path, name):
+              try:
+                  with open(history_path) as f:
+                      data = json.load(f)
+              except (FileNotFoundError, json.JSONDecodeError):
+                  return None
+              entries = data.get("entries", {}).get(name, [])
+              return entries[-1] if entries else None
+
+          def load_current(results_path):
+              with open(results_path) as f:
+                  data = json.load(f)
+              return {b["name"]: b for b in data["benchmarks"] if b.get("run_type") != "aggregate"}
+
+          def render(title, history_path, results_path, history_name):
+              print(f"## {title} -- delta vs previous run\n")
+              previous = load_previous(history_path, history_name)
+              current = load_current(results_path)
+              if previous is None:
+                  print("_No previous run recorded yet -- nothing to compare against._\n")
+                  return
+              prev_by_name = {b["name"]: b for b in previous["benches"]}
+              print("| Benchmark | Previous | Current | Delta |")
+              print("|---|---|---|---|")
+              for name, cur in current.items():
+                  unit = cur.get("time_unit", "ns")
+                  cur_time = cur["real_time"]
+                  prev_bench = prev_by_name.get(name)
+                  if prev_bench is None:
+                      print(f"| {name} | - | {cur_time:.0f} {unit} | new |")
+                      continue
+                  prev_unit = prev_bench.get("unit", "")
+                  if prev_unit != f"{unit}/iter":
+                      print(f"| {name} | (unit mismatch: {prev_unit}) | {cur_time:.0f} {unit} | - |")
+                      continue
+                  prev_time = prev_bench["value"]
+                  delta_pct = (cur_time - prev_time) / prev_time * 100 if prev_time else 0.0
+                  marker = " :warning:" if delta_pct > 10 else (" :white_check_mark:" if delta_pct < -10 else "")
+                  print(f"| {name} | {prev_time:.0f} {unit} | {cur_time:.0f} {unit} | {delta_pct:+.1f}%{marker} |")
+              print()
+
+          render("SearchEngine", "benchmark-history/search-engine.json",
+                 "benchmark-results/SearchEngine.json", "SearchEngine")
+          render("WalkScanner", "benchmark-history/walk-scanner.json",
+                 "benchmark-results/WalkScanner.json", "WalkScanner")
+          EOF
+
       - name: Track SearchEngine benchmark trend
         uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
         with:
