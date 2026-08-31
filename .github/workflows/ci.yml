@@ -219,14 +219,19 @@ jobs:
 
       # Historical series persisted via cache (no gh-pages write needed);
       # renders a trend chart into the job summary each run (rule 25).
+      # Key prefix must NOT be a prefix of any other cache key: `restore-keys`
+      # does prefix matching and restores the most-recently-created match, so a
+      # bare `benchmark-history-` prefix also matches the build-debug job's
+      # `benchmark-history-testsuite-*` cache -- restoring the wrong history file
+      # and making the compare step below always say "nothing to compare against".
       - name: Cache benchmark history
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: ./benchmark-history
-          key: benchmark-history-${{ github.run_id }}
-          restore-keys: benchmark-history-
+          path: ./bench-micro-history
+          key: bench-micro-history-${{ github.run_id }}
+          restore-keys: bench-micro-history-
 
-      # Reads ./benchmark-history/*.json BEFORE the "Track ... trend" steps
+      # Reads ./bench-micro-history/*.json BEFORE the "Track ... trend" steps
       # below append this run's data point to those same files, so this
       # sees only the previous run's data -- the delta baseline (rule 25:
       # regressions visible without manual digging). External-data-json-path
@@ -280,9 +285,9 @@ jobs:
                   print(f"| {name} | {prev_time:.0f} {unit} | {cur_time:.0f} {unit} | {delta_pct:+.1f}%{marker} |")
               print()
 
-          render("SearchEngine", "benchmark-history/search-engine.json",
+          render("SearchEngine", "bench-micro-history/search-engine.json",
                  "benchmark-results/SearchEngine.json", "SearchEngine")
-          render("WalkScanner", "benchmark-history/walk-scanner.json",
+          render("WalkScanner", "bench-micro-history/walk-scanner.json",
                  "benchmark-results/WalkScanner.json", "WalkScanner")
           EOF
 
@@ -292,7 +297,7 @@ jobs:
           name: SearchEngine
           tool: googlecpp
           output-file-path: benchmark-results/SearchEngine.json
-          external-data-json-path: ./benchmark-history/search-engine.json
+          external-data-json-path: ./bench-micro-history/search-engine.json
           summary-always: true
           fail-on-alert: false
 
@@ -302,7 +307,7 @@ jobs:
           name: WalkScanner
           tool: googlecpp
           output-file-path: benchmark-results/WalkScanner.json
-          external-data-json-path: ./benchmark-history/walk-scanner.json
+          external-data-json-path: ./bench-micro-history/walk-scanner.json
           summary-always: true
           fail-on-alert: false
 
