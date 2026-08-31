@@ -38,6 +38,11 @@ public:
     // cleared by a successful Save().
     const std::string& LastError() const;
 
+    // Always the minimal set of ancestor paths: redundant nested entries
+    // (e.g. "/home" when "/" is also present) are collapsed away on both
+    // Load() and SetSelectedRoots(), so "/" plus "/home" can never both be
+    // indexed (indexed-plan.md §12.1, §18). Load() collapses in memory only;
+    // disk catches up on the next Save().
     const std::vector<std::string>& SelectedRoots() const;
     void SetSelectedRoots(std::vector<std::string> roots);
 

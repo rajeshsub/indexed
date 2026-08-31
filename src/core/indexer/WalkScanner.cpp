@@ -7,11 +7,11 @@
 #include <sys/sysmacros.h>
 #include <unistd.h>
 
+#include "settings/PathUtils.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -27,27 +27,6 @@ namespace {
 
 constexpr size_t kGetdentsBufferSize = 65536;
 constexpr auto kQueuePollInterval = std::chrono::milliseconds(5);
-
-std::string StripTrailingSlash(std::string path) {
-    while (path.size() > 1 && path.back() == '/') {
-        path.pop_back();
-    }
-    return path;
-}
-
-// Resolves `path` to a canonical absolute form via realpath() when possible
-// (matches indexed-plan.md §7.1: "compare on canonical absolute paths").
-// Falls back to a trailing-slash-normalized copy of the input when the path
-// does not (yet) resolve, so callers can still compare consistently.
-std::string CanonicalizeBestEffort(const std::string& path) {
-    char* resolved = ::realpath(path.c_str(), nullptr);
-    if (resolved != nullptr) {
-        std::string result(resolved);
-        std::free(resolved);
-        return StripTrailingSlash(result);
-    }
-    return StripTrailingSlash(path);
-}
 
 std::string JoinPath(const std::string& dir, std::string_view name) {
     if (dir.size() == 1 && dir.front() == '/') {
@@ -223,9 +202,12 @@ bool WalkScanner::FastScanAvailable(const std::string& /*root*/) const {
 
 void WalkScanner::Scan(const ScanOptions& options, ScanCallback onEntry,
                        ProgressCallback onProgress, const std::atomic<bool>& cancelToken) {
-    std::vector<std::string> canonicalRoots(options.rootPaths.size());
-    std::transform(options.rootPaths.begin(), options.rootPaths.end(), canonicalRoots.begin(),
-                   CanonicalizeBestEffort);
+    // Defensive: callers should already pass a collapsed list (Settings
+    // enforces it), but WalkScanner is a public API -- drop redundant nested
+    // roots here too so "/" plus "/home" can never double-emit
+    // (indexed-plan.md §7.1, §18). CollapseRedundantRoots already
+    // canonicalizes each survivor.
+    std::vector<std::string> canonicalRoots = CollapseRedundantRoots(options.rootPaths);
 
     std::vector<std::string> excludedNormalized(options.excludedPaths.size());
     std::transform(options.excludedPaths.begin(), options.excludedPaths.end(),

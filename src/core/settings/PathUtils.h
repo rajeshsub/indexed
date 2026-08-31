@@ -46,6 +46,22 @@ DataDirs ResolveDataDirs();
 // that path). Never throws.
 bool EnsureDirectory(const std::string& path);
 
+// Resolves `path` to a canonical absolute form via realpath() when possible
+// (indexed-plan.md §7.1: "compare on canonical absolute paths"). When the
+// path does not resolve (e.g. does not exist yet), falls back to a
+// trailing-slash-stripped copy of the input so callers can still compare
+// consistently. A bare "/" is returned unchanged.
+std::string CanonicalizeBestEffort(const std::string& path);
+
+// Reduces `roots` to the minimal set of ancestors: canonicalizes each entry
+// (CanonicalizeBestEffort), drops any entry that is equal to or nested under
+// another kept entry (whole-path-component containment, so "/home/user" does
+// not absorb "/home/userfoo"), and returns the survivors sorted ascending
+// for stable display. Empty in -> empty out. This is the invariant enforced
+// on SelectedRoots so "/" plus "/home" can never both be indexed
+// (indexed-plan.md §12.1, §18).
+std::vector<std::string> CollapseRedundantRoots(const std::vector<std::string>& roots);
+
 // Formats with thousands separators, e.g. 1234567 -> "1,234,567".
 std::string FormatFileCount(uint64_t count);
 

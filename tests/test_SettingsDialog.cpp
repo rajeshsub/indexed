@@ -37,6 +37,7 @@ private slots:
     void addButtonAppendsToRightListViaPickFolder();
     void addButtonIgnoresEmptyPick();
     void resultReflectsEditsAfterAccept();
+    void acceptCollapsesRedundantNestedRoots();
     void diffRootsNoChanges();
     void diffRootsPureAdditions();
     void diffRootsPureRemovals();
@@ -224,6 +225,25 @@ void TestSettingsDialog::resultReflectsEditsAfterAccept() {
     QCOMPARE(result.selectedRoots, (std::vector<std::string>{"/data"}));
     QCOMPARE(result.excludedPaths, (std::vector<std::string>{"/proc", "/excl/new"}));
     QCOMPARE(result.reindexIntervalHours, 0);
+}
+
+void TestSettingsDialog::acceptCollapsesRedundantNestedRoots() {
+    indexed::SettingsDialogInitialState initial;
+    initial.selectedRoots = {"/data"};
+
+    TestableSettingsDialog dlg(initial);
+    auto* pathList = dlg.findChild<QListWidget*>("pathList");
+    auto* addPathButton = dlg.findChild<QPushButton*>("addPathButton");
+
+    // User adds "/" while "/data" is still in the list -- "/" absorbs it.
+    dlg.nextPickedFolder = "/";
+    QTest::mouseClick(addPathButton, Qt::LeftButton);
+    QCOMPARE(pathList->count(), 2);  // both shown until OK
+
+    dlg.accept();
+
+    indexed::SettingsDialogResult result = dlg.Result();
+    QCOMPARE(result.selectedRoots, (std::vector<std::string>{"/"}));
 }
 
 void TestSettingsDialog::diffRootsNoChanges() {

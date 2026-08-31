@@ -273,6 +273,11 @@ public:
 - **Skip symlinks** (don't follow) to avoid loops -- mirrors winindex skipping reparse points.
 - **Exclusions:** prune any directory whose path matches an excluded prefix (normalize
   trailing `/`). Compare on canonical absolute paths.
+- **Redundant roots:** before the walk, collapse `rootPaths` to the minimal set of
+  ancestors (`PathUtils::CollapseRedundantRoots`) -- canonicalize each entry, then drop any
+  that is equal to or nested under another. `Settings` already enforces this invariant on
+  `SelectedRoots`, but `WalkScanner` re-applies it defensively so a caller passing both `/`
+  and `/home` can never emit the `/home` subtree twice (§18).
 - **Metadata:** use `statx` with a mask requesting only `size|mtime|type|mode`. Consider
   `AT_STATX_DONT_SYNC` for speed. `d_type` from `getdents64` often gives file type without a
   stat -- use it to skip `statx` on entries where only name is needed (but we need size+mtime
@@ -587,7 +592,7 @@ Payload:
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `SelectedRoots` | chosen on first run | newline-separated absolute paths to index (mounts or folders) |
+| `SelectedRoots` | chosen on first run | newline-separated absolute paths to index (mounts or folders). Always stored as the minimal ancestor set: redundant nested entries (e.g. `/home` when `/` is also present) are collapsed away on both load and save, so a superset and its subset can never both be indexed (§18). `Load()` collapses in memory only; the file catches up on the next save. |
 | `ExcludedPaths` | see §12.3 | newline-separated excluded path prefixes |
 | `ReindexIntervalHours` | `48` | staleness threshold; `0` = manual only |
 | `UseRegex` | `0` | RE2 regex search |
@@ -860,6 +865,17 @@ ADRs in `docs/adr/`; the rest are folded directly into the relevant section abov
     checks -- see `docs/adr/0008-privileged-helper-and-elevation.md`.
 12. **Wayland test target:** GNOME, with `xdg-open` fallback for reveal-in-folder.
 13. **Timestamp epoch:** nanoseconds since Unix epoch, everywhere.
+14. **Redundant nested roots (resolved 2026-08-31, post-M6 bugfix):** `SelectedRoots` is
+    collapsed to the minimal set of ancestor paths at the `Settings` boundary
+    (`PathUtils::CollapseRedundantRoots`, applied in both `Load()` and `SetSelectedRoots()`);
+    `SettingsDialog::accept()` and `WalkScanner::Scan()` re-apply it. Rationale: a user could
+    add both `/` and `/home`, which made every file under `/home` appear twice in results and
+    forced the scanner to crawl the whole-filesystem superset. Collapsing is silent (dropped
+    entries are not surfaced as an error). Bind-mount / hardlink double-listing (same inode,
+    two unrelated paths) is a known, documented limitation -- not handled, as it needs a
+    global inode set on the scan hot path. The first-run dialog no longer pre-checks `/`
+    (§19) -- only the mount containing `$HOME` -- so the default install indexes the user's
+    files, not the entire filesystem.
 
 ---
 
@@ -879,7 +895,7 @@ Match the reference screenshot (`/home/rajesh/projects/winindex/src/ui/assets/sc
   `YYYY-MM-DD HH:MM` local time.
 - **Status bar:** bottom. Shows `Ready.` initially; during use shows result count
   ("`384 result(s)`", or "`… showing first 10,000. Refine your search…`" at the cap); while
-  idle-with-index shows "`<N> files | <locations> | <age>`" (e.g. "1,234,567 files | / , /home |
+  idle-with-index shows "`<N> files | <locations> | <age>`" (e.g. "1,234,567 files | /home |
   2 hrs old"). Indexing progress messages during scan.
 - **Menus:**
   - **Search:** Regular Expression (Alt+1), Case Sensitive (Alt+2), Whole Word (Alt+3),
@@ -890,7 +906,9 @@ Match the reference screenshot (`/home/rajesh/projects/winindex/src/ui/assets/sc
   Copy Filename. (Open disabled for multi-selection.) Cut/Delete available via keyboard;
   optionally add to context menu too.
 - **First-Run dialog:** "indexed -- First Run Setup". Multi-select list of mounts to index
-  (pre-select the mount containing `$HOME` and `/`); **Automatic Reindex** group ("Manual only"
+  (pre-select only the mount containing `$HOME` -- the longest-prefix match; when there is no
+  separate `/home` mount that is `/` itself, otherwise `/` stays unchecked so the default
+  install does not crawl the whole filesystem, §18); **Automatic Reindex** group ("Manual only"
   checkbox + interval spinbox + Hours/Days combo, default 48 Hours); **Excluded folders** list
   with Add…/Remove (folder picker); OK/Cancel.
 - **Settings dialog:** "indexed -- Settings". **Paths to index** list + Add Location…/Remove;

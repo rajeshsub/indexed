@@ -7,6 +7,8 @@
 #include <fstream>
 #include <string>
 
+using indexed::CanonicalizeBestEffort;
+using indexed::CollapseRedundantRoots;
 using indexed::DataDirs;
 using indexed::EnsureDirectory;
 using indexed::ExecutableDir;
@@ -169,6 +171,77 @@ TEST(PathUtils, FormatLocationListJoinsAndStripsTrailingSlash) {
     EXPECT_EQ(FormatLocationList({"/home/user/", "/mnt/data/"}), "/home/user, /mnt/data");
     // A bare root is left alone rather than stripped to an empty string.
     EXPECT_EQ(FormatLocationList({"/"}), "/");
+}
+
+TEST(PathUtils, CollapseRedundantRootsEmptyAndSingle) {
+    EXPECT_TRUE(CollapseRedundantRoots({}).empty());
+    EXPECT_EQ(CollapseRedundantRoots({"/home/user"}), (std::vector<std::string>{"/home/user"}));
+}
+
+TEST(PathUtils, CollapseRedundantRootsDropsExactDuplicates) {
+    EXPECT_EQ(CollapseRedundantRoots({"/home/user", "/home/user"}),
+              (std::vector<std::string>{"/home/user"}));
+}
+
+TEST(PathUtils, CollapseRedundantRootsDropsNestedUnderAncestor) {
+    // The reported bug: "/" plus "/home" -> just "/".
+    EXPECT_EQ(CollapseRedundantRoots({"/", "/home"}), (std::vector<std::string>{"/"}));
+    EXPECT_EQ(CollapseRedundantRoots({"/home", "/"}), (std::vector<std::string>{"/"}));
+}
+
+TEST(PathUtils, CollapseRedundantRootsDropsDeeplyNestedEntries) {
+    EXPECT_EQ(CollapseRedundantRoots({"/home/user", "/home/user/projects/indexed", "/home/user/a"}),
+              (std::vector<std::string>{"/home/user"}));
+}
+
+TEST(PathUtils, CollapseRedundantRootsKeepsDisjointSiblings) {
+    EXPECT_EQ(CollapseRedundantRoots({"/home/a", "/home/b"}),
+              (std::vector<std::string>{"/home/a", "/home/b"}));
+}
+
+TEST(PathUtils, CollapseRedundantRootsComparesWholePathComponents) {
+    // "/home/user" must NOT absorb "/home/userfoo" -- string prefix is not
+    // a path-component prefix.
+    EXPECT_EQ(CollapseRedundantRoots({"/home/user", "/home/userfoo"}),
+              (std::vector<std::string>{"/home/user", "/home/userfoo"}));
+}
+
+TEST(PathUtils, CollapseRedundantRootsSortsResultForStableDisplay) {
+    EXPECT_EQ(CollapseRedundantRoots({"/mnt/z", "/mnt/a", "/mnt/m"}),
+              (std::vector<std::string>{"/mnt/a", "/mnt/m", "/mnt/z"}));
+}
+
+TEST(PathUtils, CollapseRedundantRootsStripsTrailingSlashesBeforeComparing) {
+    EXPECT_EQ(CollapseRedundantRoots({"/home/", "/home/user/"}),
+              (std::vector<std::string>{"/home"}));
+}
+
+TEST(PathUtils, CollapseRedundantRootsResolvesSymlinkedRoots) {
+    std::string base = TempDirPath("collapse_symlink");
+    ASSERT_TRUE(std::filesystem::create_directories(base + "/real/sub"));
+    std::error_code ec;
+    std::filesystem::create_directory_symlink(base + "/real", base + "/link", ec);
+    ASSERT_FALSE(ec);
+
+    // "<base>/link" resolves to "<base>/real", which is an ancestor of
+    // "<base>/real/sub" -> the nested entry is dropped.
+    std::vector<std::string> collapsed =
+        CollapseRedundantRoots({base + "/link", base + "/real/sub"});
+    EXPECT_EQ(collapsed, (std::vector<std::string>{base + "/real"}));
+
+    std::filesystem::remove_all(base);
+}
+
+TEST(PathUtils, CollapseRedundantRootsKeepsNonExistentPathsViaTextualFallback) {
+    // realpath() fails on a path that doesn't exist; the entry is still kept
+    // (trailing-slash-normalized) rather than silently dropped.
+    EXPECT_EQ(CollapseRedundantRoots({"/no/such/path/x", "/no/such/path/y"}),
+              (std::vector<std::string>{"/no/such/path/x", "/no/such/path/y"}));
+}
+
+TEST(PathUtils, CanonicalizeBestEffortStripsTrailingSlashOnMissingPath) {
+    EXPECT_EQ(CanonicalizeBestEffort("/no/such/path/"), "/no/such/path");
+    EXPECT_EQ(CanonicalizeBestEffort("/"), "/");
 }
 
 TEST(Logger, LogAppendsTimestampedLineAndCreatesParentDirectory) {

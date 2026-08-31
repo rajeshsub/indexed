@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
+#include <string_view>
 
 namespace indexed {
 
@@ -80,6 +81,60 @@ bool EnsureDirectory(const std::string& path) {
         return fs::is_directory(path, ec);
     }
     return fs::create_directories(path, ec);
+}
+
+namespace {
+
+std::string StripTrailingSlash(std::string path) {
+    while (path.size() > 1 && path.back() == '/') {
+        path.pop_back();
+    }
+    return path;
+}
+
+// True if `path` is equal to `ancestor` or nested directly/indirectly under
+// it, comparing on whole path components ("/home/user" is under "/home" but
+// "/home/userfoo" is not). Both arguments must already be canonical and
+// trailing-slash-stripped.
+bool IsUnderOrEqual(std::string_view path, const std::string& ancestor) {
+    if (path == ancestor) {
+        return true;
+    }
+    if (ancestor == "/") {
+        return path.size() > 1 && path.front() == '/';
+    }
+    return path.size() > ancestor.size() && path.compare(0, ancestor.size(), ancestor) == 0 &&
+           path[ancestor.size()] == '/';
+}
+
+}  // namespace
+
+std::string CanonicalizeBestEffort(const std::string& path) {
+    char* resolved = ::realpath(path.c_str(), nullptr);
+    if (resolved != nullptr) {
+        std::string result(resolved);
+        std::free(resolved);
+        return StripTrailingSlash(result);
+    }
+    return StripTrailingSlash(path);
+}
+
+std::vector<std::string> CollapseRedundantRoots(const std::vector<std::string>& roots) {
+    std::vector<std::string> canonical(roots.size());
+    std::transform(roots.begin(), roots.end(), canonical.begin(), CanonicalizeBestEffort);
+    std::sort(canonical.begin(), canonical.end());
+    canonical.erase(std::unique(canonical.begin(), canonical.end()), canonical.end());
+
+    std::vector<std::string> minimal;
+    for (const std::string& candidate : canonical) {
+        const bool absorbed =
+            std::any_of(minimal.begin(), minimal.end(),
+                        [&](const std::string& kept) { return IsUnderOrEqual(candidate, kept); });
+        if (!absorbed) {
+            minimal.push_back(candidate);
+        }
+    }
+    return minimal;
 }
 
 std::string FormatFileCount(uint64_t count) {

@@ -241,6 +241,38 @@ TEST(WalkScanner, SymlinkIsSkippedEntirely) {
     EXPECT_FALSE(sink.Contains(tempDir.Path() + "/link_to_dir/real.txt"));
 }
 
+TEST(WalkScanner, NestedRedundantRootsDoNotDoubleEmit) {
+    TempDir tempDir;
+    ASSERT_FALSE(tempDir.Path().empty());
+
+    fs::create_directories(tempDir.Path() + "/child/grand");
+    WriteFile(tempDir.Path() + "/child/a.txt", "a");
+    WriteFile(tempDir.Path() + "/child/grand/b.txt", "b");
+
+    CollectingSink sink;
+    std::atomic<int> emitCount{0};
+    ScanOptions options;
+    // Parent and a nested child both listed -- the child is redundant.
+    options.rootPaths = {tempDir.Path(), tempDir.Path() + "/child"};
+    std::atomic<bool> cancelToken{false};
+
+    WalkScanner scanner;
+    scanner.Scan(
+        options,
+        [&](const FileEntry& entry) {
+            sink.OnEntry(entry);
+            emitCount.fetch_add(1, std::memory_order_relaxed);
+        },
+        [&](uint64_t, const std::string&) {}, cancelToken);
+
+    // child, child/a.txt, child/grand, child/grand/b.txt = 4 distinct entries,
+    // each emitted exactly once (no duplicate from the redundant "/child" root).
+    EXPECT_EQ(sink.Count(), 4u);
+    EXPECT_EQ(emitCount.load(), 4);
+    EXPECT_TRUE(sink.Contains(tempDir.Path() + "/child/a.txt"));
+    EXPECT_TRUE(sink.Contains(tempDir.Path() + "/child/grand/b.txt"));
+}
+
 TEST(WalkScanner, CancellationStopsEarly) {
     TempDir tempDir;
     ASSERT_FALSE(tempDir.Path().empty());

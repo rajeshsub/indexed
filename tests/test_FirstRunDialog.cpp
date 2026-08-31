@@ -68,6 +68,7 @@ class TestFirstRunDialog : public QObject {
 
 private slots:
     void MountListPopulatedAndPreselected();
+    void HomeOnRootMountPreselectsRootWhenNoSeparateHomeMount();
     void DefaultIntervalIs48HoursManualUnchecked();
     void ManualOnlyProducesZeroHours();
     void SpinnerDaysConvertToHours();
@@ -84,8 +85,36 @@ void TestFirstRunDialog::MountListPopulatedAndPreselected() {
     QVERIFY(mountList != nullptr);
     QCOMPARE(mountList->count(), 3);
 
-    QCOMPARE(CheckStateFor(mountList, "/"), Qt::Checked);
+    // Only the mount containing $HOME is pre-checked. "/" is deliberately
+    // left unchecked -- pre-checking it would index the entire filesystem by
+    // default and, when "/home" is a separate mount, create the "/" + "/home"
+    // overlap the collapse logic exists to prevent (indexed-plan.md §19).
+    QCOMPARE(CheckStateFor(mountList, "/"), Qt::Unchecked);
     QCOMPARE(CheckStateFor(mountList, "/home"), Qt::Checked);
+    QCOMPARE(CheckStateFor(mountList, "/media/usb"), Qt::Unchecked);
+}
+
+void TestFirstRunDialog::HomeOnRootMountPreselectsRootWhenNoSeparateHomeMount() {
+    // No separate /home mount: $HOME lives on "/", so "/" is the longest
+    // prefix and gets pre-checked (it's the user's data mount here, not a
+    // whole-filesystem opt-in).
+    std::vector<MountInfo> mounts;
+    MountInfo root;
+    root.mountPoint = "/";
+    root.device = "/dev/sda1";
+    root.fsType = "ext4";
+    mounts.push_back(root);
+    MountInfo usb;
+    usb.mountPoint = "/media/usb";
+    usb.device = "/dev/sdb1";
+    usb.fsType = "vfat";
+    usb.removable = true;
+    mounts.push_back(usb);
+
+    FirstRunDialog dialog(mounts, "/home/alice", {});
+    auto* mountList = dialog.findChild<QListWidget*>("mountList");
+    QVERIFY(mountList != nullptr);
+    QCOMPARE(CheckStateFor(mountList, "/"), Qt::Checked);
     QCOMPARE(CheckStateFor(mountList, "/media/usb"), Qt::Unchecked);
 }
 
@@ -193,7 +222,9 @@ void TestFirstRunDialog::ResultReflectsAllFieldsOnAccept() {
     QCOMPARE(dialog.result(), static_cast<int>(QDialog::Accepted));
 
     FirstRunResult result = dialog.Result();
-    QCOMPARE(result.selectedRoots.size(), static_cast<size_t>(3));
+    // "/home" (pre-checked, contains $HOME) + "/media/usb" (checked above).
+    // "/" is not pre-checked (indexed-plan.md §19).
+    QCOMPARE(result.selectedRoots.size(), static_cast<size_t>(2));
     QCOMPARE(result.reindexIntervalHours, 48);
     QCOMPARE(result.excludedPaths.size(), static_cast<size_t>(1));
     QCOMPARE(QString::fromStdString(result.excludedPaths[0]), QString("/proc"));

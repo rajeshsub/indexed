@@ -75,7 +75,8 @@ bool Settings::Load() {
         return false;
     }
 
-    selectedRoots_ = SplitLines(ini.GetString(kKeySelectedRoots).value_or(""));
+    selectedRoots_ =
+        CollapseRedundantRoots(SplitLines(ini.GetString(kKeySelectedRoots).value_or("")));
 
     if (ini.Has(kKeyExcludedPaths)) {
         excludedPaths_ = SplitLines(ini.GetString(kKeyExcludedPaths).value_or(""));
@@ -145,7 +146,7 @@ const std::vector<std::string>& Settings::SelectedRoots() const {
 }
 
 void Settings::SetSelectedRoots(std::vector<std::string> roots) {
-    selectedRoots_ = std::move(roots);
+    selectedRoots_ = CollapseRedundantRoots(roots);
 }
 
 const std::vector<std::string>& Settings::ExcludedPaths() const {

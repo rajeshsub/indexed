@@ -136,10 +136,13 @@ void FirstRunDialog::PreselectMounts() {
     for (int i = 0; i < mountList_->count(); ++i) {
         QListWidgetItem* item = mountList_->item(i);
         const std::string mountPoint = item->data(Qt::UserRole).toString().toStdString();
-        // Pre-select both the mount containing $HOME (longest-prefix match)
-        // and "/" itself, per indexed-plan.md §19 -- these may be the same
-        // mount or two different ones.
-        if (mountPoint == bestPrefix || mountPoint == "/") {
+        // Pre-select only the mount containing $HOME (longest-prefix match),
+        // per indexed-plan.md §19. When there is no separate /home mount this
+        // is "/" itself; when there is, "/" stays unchecked -- pre-checking it
+        // would index the whole filesystem by default and pair with "/home"
+        // to form the redundant-root overlap the collapse logic guards
+        // against.
+        if (mountPoint == bestPrefix) {
             item->setCheckState(Qt::Checked);
         }
     }

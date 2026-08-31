@@ -11,6 +11,7 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include "settings/PathUtils.h"
 #include <algorithm>
 #include <unordered_set>
 
@@ -172,7 +173,11 @@ SettingsDialogResult SettingsDialog::Result() const {
 }
 
 void SettingsDialog::accept() {
-    result_.selectedRoots = ListWidgetItems(pathList_);
+    // Collapse redundant nested roots (e.g. the user added "/" while "/home"
+    // was still listed) before handing back -- the same invariant Settings
+    // enforces (indexed-plan.md §12.1, §18). MainWindow's DiffRoots then
+    // compares two already-collapsed lists.
+    result_.selectedRoots = CollapseRedundantRoots(ListWidgetItems(pathList_));
     result_.excludedPaths = ListWidgetItems(excludedList_);
 
     if (manualOnlyCheck_->isChecked()) {

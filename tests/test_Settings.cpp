@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 
 using indexed::LogLevel;
@@ -169,6 +171,56 @@ TEST(Settings, MultipleRootsAndExcludedPathsSurviveNewlineJoinRoundTrip) {
         ASSERT_TRUE(settings.Load());
         EXPECT_EQ(settings.SelectedRoots(), roots);
         EXPECT_EQ(settings.ExcludedPaths(), excludes);
+    }
+
+    std::filesystem::remove(path);
+}
+
+TEST(Settings, SetSelectedRootsCollapsesRedundantNestedEntries) {
+    Settings settings(TempFilePath("collapse_setter"), "/home/testuser");
+    ASSERT_TRUE(settings.Load());
+
+    settings.SetSelectedRoots({"/", "/home", "/home/testuser/projects"});
+
+    // "/" absorbs everything nested -> only "/" survives.
+    EXPECT_EQ(settings.SelectedRoots(), (std::vector<std::string>{"/"}));
+}
+
+TEST(Settings, LoadCollapsesRedundantRootsFromHandEditedConf) {
+    const std::string path = TempFilePath("collapse_on_load");
+    std::filesystem::remove(path);
+
+    {
+        std::ofstream conf(path);
+        conf << "SelectedRoots=/mnt/data\\n/mnt/data/sub\n";
+    }
+
+    Settings settings(path, "/home/testuser");
+    ASSERT_TRUE(settings.Load());
+    EXPECT_EQ(settings.SelectedRoots(), (std::vector<std::string>{"/mnt/data"}));
+
+    // Load must not have rewritten the file -- disk catches up only on Save().
+    std::ifstream check(path);
+    std::string contents((std::istreambuf_iterator<char>(check)), std::istreambuf_iterator<char>());
+    EXPECT_NE(contents.find("/mnt/data\\n/mnt/data/sub"), std::string::npos);
+
+    std::filesystem::remove(path);
+}
+
+TEST(Settings, SaveThenLoadPersistsCollapsedRootList) {
+    const std::string path = TempFilePath("collapse_roundtrip");
+    std::filesystem::remove(path);
+
+    {
+        Settings settings(path, "/home/testuser");
+        ASSERT_TRUE(settings.Load());
+        settings.SetSelectedRoots({"/srv", "/srv/a", "/srv/b"});
+        ASSERT_TRUE(settings.Save());
+    }
+    {
+        Settings settings(path, "/home/testuser");
+        ASSERT_TRUE(settings.Load());
+        EXPECT_EQ(settings.SelectedRoots(), (std::vector<std::string>{"/srv"}));
     }
 
     std::filesystem::remove(path);
