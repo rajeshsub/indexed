@@ -269,6 +269,48 @@ TEST(InotifyWatcher, NewSubdirectoryIsWatchedLiveAndFileInsideReported) {
         WaitFor([&] { return HasEvent(collector.Snapshot(), FileChangeType::Added, nestedFile); }));
 }
 
+TEST(InotifyWatcher, AlreadyPopulatedDirectoryMovedInReportsItsContents) {
+    // The real-world "mkdir d && touch d/f" and "mv populated_dir into the
+    // tree" case: contents exist before the watcher can watch the new
+    // directory. The watcher must walk what is already there, not only
+    // react to future events inside it.
+    TempDir tempDir;
+    ASSERT_FALSE(tempDir.Path().empty());
+    TempDir stagingDir;  // a sibling temp dir, outside the watched root
+    ASSERT_FALSE(stagingDir.Path().empty());
+
+    // Build a populated subtree entirely outside the watched root.
+    const std::string staged = stagingDir.Path() + "/payload";
+    fs::create_directories(staged + "/sub");
+    WriteFile(staged + "/top.txt", "a");
+    WriteFile(staged + "/sub/deep.txt", "b");
+
+    InotifyWatcher watcher;
+    EventCollector collector;
+    MonitorSession session(watcher, tempDir.Path(), collector);
+    WaitUntilWatcherReady(tempDir.Path(), collector);
+
+    // Atomic move into the watched tree: no window for the test to "wait
+    // for the dir, then write" -- the contents are already present.
+    const std::string moved = tempDir.Path() + "/payload";
+    std::error_code ec;
+    fs::rename(staged, moved, ec);
+    ASSERT_FALSE(ec);
+
+    EXPECT_TRUE(WaitFor(
+        [&] { return HasEvent(collector.Snapshot(), FileChangeType::Added, moved + "/top.txt"); }));
+    EXPECT_TRUE(WaitFor([&] {
+        return HasEvent(collector.Snapshot(), FileChangeType::Added, moved + "/sub/deep.txt");
+    }));
+
+    // A file created inside the moved-in nested subdir is still picked up,
+    // proving the subtree's watches were registered too.
+    const std::string later = moved + "/sub/later.txt";
+    WriteFile(later, "c");
+    EXPECT_TRUE(
+        WaitFor([&] { return HasEvent(collector.Snapshot(), FileChangeType::Added, later); }));
+}
+
 TEST(InotifyWatcher, StopTokenCausesPromptReturn) {
     TempDir tempDir;
     ASSERT_FALSE(tempDir.Path().empty());

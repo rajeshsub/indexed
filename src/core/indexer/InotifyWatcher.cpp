@@ -128,6 +128,36 @@ void AddWatchesRecursive(int fd, const std::string& root, WatchTable& watches,
     }
 }
 
+// Handles a directory that appeared inside the watched tree live (IN_CREATE
+// or IN_MOVED_TO with IN_ISDIR): add watches for it and its subtree, then
+// emit an Added for everything already inside it.
+//
+// The emit is not redundant with the IN_CREATE/IN_MOVED_TO that triggered
+// this. Between the directory being created (or moved in) and
+// inotify_add_watch registering a watch on it, the kernel generates no
+// events for anything happening inside it -- so a `mkdir d && touch d/f`
+// pair, or an `mv` of an already-populated directory into the tree, would
+// otherwise lose `f` entirely. Walking the current contents here closes
+// that window. Re-emitting an entry that a later event also reports is
+// harmless: the consumer (Indexer::ApplyChangeEvent) re-stats and
+// ApplyAdds, which is idempotent.
+void WatchAndEmitNewSubtree(int fd, const std::string& dir, WatchTable& watches,
+                            std::atomic<bool>& limitExceeded, const ChangeCallback& onChange) {
+    AddWatchesRecursive(fd, dir, watches, limitExceeded);
+
+    std::error_code walkEc;
+    fs::recursive_directory_iterator it(dir, fs::directory_options::skip_permission_denied, walkEc);
+    fs::recursive_directory_iterator end;
+    for (; !walkEc && it != end; it.increment(walkEc)) {
+        const fs::directory_entry& entry = *it;
+        std::error_code symEc;
+        if (entry.is_symlink(symEc) || symEc) {
+            continue;  // never followed (mirrors WalkScanner / AddWatchesRecursive)
+        }
+        onChange(FileChangeEvent{FileChangeType::Added, entry.path().string(), std::string()});
+    }
+}
+
 }  // namespace
 
 bool InotifyWatcher::IsAvailable(const std::string& root) const {
@@ -196,10 +226,10 @@ void InotifyWatcher::StartMonitoring(const std::string& root, ChangeCallback onC
                 bool isDir = (event->mask & IN_ISDIR) != 0;
 
                 if ((event->mask & IN_CREATE) != 0) {
-                    if (isDir) {
-                        AddWatchesRecursive(fd, path, watches, watchLimitExceeded_);
-                    }
                     onChange(FileChangeEvent{FileChangeType::Added, path, std::string()});
+                    if (isDir) {
+                        WatchAndEmitNewSubtree(fd, path, watches, watchLimitExceeded_, onChange);
+                    }
                 } else if ((event->mask & IN_DELETE) != 0) {
                     // If `path` was itself a watched directory, its own
                     // watch generates IN_DELETE_SELF + IN_IGNORED
@@ -221,7 +251,12 @@ void InotifyWatcher::StartMonitoring(const std::string& root, ChangeCallback onC
                         onChange(FileChangeEvent{FileChangeType::Added, path, std::string()});
                     }
                     if (isDir) {
-                        AddWatchesRecursive(fd, path, watches, watchLimitExceeded_);
+                        // A directory moved in may already be populated;
+                        // emit its contents (see WatchAndEmitNewSubtree). On
+                        // an in-tree rename this re-emits entries the moved
+                        // subtree's surviving watches will also report, which
+                        // is idempotent downstream.
+                        WatchAndEmitNewSubtree(fd, path, watches, watchLimitExceeded_, onChange);
                     }
                 } else if ((event->mask & (IN_MODIFY | IN_CLOSE_WRITE)) != 0) {
                     onChange(FileChangeEvent{FileChangeType::Modified, path, std::string()});

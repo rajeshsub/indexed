@@ -26,6 +26,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   were never indexed), and even a correct index change did not refresh the
   on-screen query. Both are fixed; bursts of changes are coalesced into one
   refresh.
+- Live monitoring no longer loses files that already exist inside a directory
+  the moment it appears. `mkdir d && touch d/f`, or moving an already-populated
+  folder into a watched location, created a window between the directory
+  existing and `inotify` watching it during which the kernel reported nothing;
+  `InotifyWatcher` now walks the new directory's current contents and reports
+  them, in addition to watching it for future changes.
 - Dragging a result row out to a file manager now works. `ResultModel` did
   not mark its rows drag-enabled, so the view never started the drag.
 - Crash on first launch: `IndexStore::AddEntry` was called concurrently by

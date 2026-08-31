@@ -70,5 +70,10 @@ side.
 - inotify's watch-count ceiling is a real limitation on huge trees for unprivileged users;
   surfaced via status-bar message ("live monitoring incomplete -- periodic rescan active"),
   not silently swallowed.
+- inotify reports nothing for a directory between its creation (or move into the tree) and
+  `inotify_add_watch` registering a watch on it. `InotifyWatcher` closes that window by
+  walking the new directory's current contents and emitting them as `Added` when it starts
+  watching, so a `mkdir d && touch d/f` or an `mv` of a populated directory is not lost.
+  Re-emitting an entry a later event also reports is idempotent downstream.
 - The GUI↔helper coupling stays deliberately thin: no socket, no D-Bus service, no
   daemon-shaped protocol to test and secure -- three signals and one polled file.
