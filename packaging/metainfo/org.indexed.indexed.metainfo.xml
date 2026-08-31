@@ -38,6 +38,13 @@
   </provides>
 
   <releases>
+    <release version="0.3.0" date="2026-08-31">
+      <description>
+        <p>Live monitoring now updates search results as files change, and file operations
+        match a file manager: Ctrl+C copies the file itself, drag-out works, and
+        Shift+Delete deletes permanently.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-07-07">
       <description>
         <p>First release: search, live monitoring, and privileged helper for full-system indexing.</p>
