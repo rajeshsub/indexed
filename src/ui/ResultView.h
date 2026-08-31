@@ -13,11 +13,12 @@ namespace indexed {
 // click-to-sort with Size descending-first, header drag-reorder, drag-out as
 // text/uri-list, context menu + keyboard actions.
 //
-// Action policy: copy (Ctrl+C full paths, context-menu Copy Filename) is
-// handled internally via the clipboard -- it is self-contained. Open /
-// reveal / cut / trash are emitted as signals for MainWindow to handle,
-// since they touch the filesystem, D-Bus, or index state this widget
-// shouldn't own.
+// Action policy: everything that is pure clipboard or drag -- Ctrl+C /
+// Ctrl+X (file-object copy/cut, docs/adr/0013), context Copy / Cut / Copy
+// Full Path / Copy Filename, and the drag payload -- is handled internally;
+// it touches nothing but QClipboard/QDrag. Open / reveal / trash / permanent
+// delete are emitted as signals for MainWindow, since they touch the
+// filesystem, D-Bus, or index state this widget shouldn't own.
 class ResultView : public QTreeView {
     Q_OBJECT
 
@@ -34,21 +35,23 @@ public:
     QString FullPathForRow(int row) const;
     QStringList SelectedFullPaths() const;
 
-    // Context menu per §19: Open, Open Containing Folder, separator, Copy
-    // Full Path, Copy Filename. Open is disabled when more than one row is
-    // selected. Caller owns the returned menu (parented to `parent`).
-    // Actions carry objectNames (openAction/revealAction/copyPathAction/
-    // copyNameAction) for tests and shortcut wiring.
+    // Context menu per §19 + docs/adr/0013: Open, Open Containing Folder,
+    // separator, Copy, Cut, Copy Full Path, Copy Filename. Open is disabled
+    // when more than one row is selected. Caller owns the returned menu
+    // (parented to `parent`). Actions carry objectNames (openAction/
+    // revealAction/copyAction/cutAction/copyPathAction/copyNameAction) for
+    // tests and shortcut wiring.
     QMenu* BuildContextMenu(QWidget* parent);
 
-    // text/uri-list drag payload for the given rows. Caller owns the result.
+    // File-object drag payload (text/uri-list + x-special/gnome-copied-files
+    // + plain-text path) for the given rows. Caller owns the result.
     QMimeData* BuildDragMimeData(const QList<int>& rows) const;
 
 signals:
-    void OpenRequested(const QString& path);        // Enter / context Open
-    void RevealRequested(const QString& path);      // Ctrl+Enter / context reveal
-    void CutRequested(const QStringList& paths);    // Ctrl+X
-    void TrashRequested(const QStringList& paths);  // Delete
+    void OpenRequested(const QString& path);                    // Enter / context Open
+    void RevealRequested(const QString& path);                  // Ctrl+Enter / context reveal
+    void TrashRequested(const QStringList& paths);              // Delete
+    void DeletePermanentlyRequested(const QStringList& paths);  // Shift+Delete
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;
@@ -59,6 +62,10 @@ private:
     // Selection when present, else the current row -- keyboard actions work
     // on the focused row even before an explicit selection exists.
     QStringList SelectedFullPathsOrCurrent() const;
+    // Ctrl+C / context Copy and Ctrl+X / context Cut: put the file-object
+    // MIME (copy or cut variant) for the current selection on the clipboard.
+    void CopySelectionToClipboard() const;
+    void CutSelectionToClipboard() const;
     void CopySelectedFullPathsToClipboard() const;
     void CopySelectedFilenamesToClipboard() const;
     void OnHeaderClicked(int section);

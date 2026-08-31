@@ -39,6 +39,9 @@ private slots:
     void sort_dateIsNumericNotLexical();
     void sort_nameIsCaseInsensitiveLexical();
     void entryAt_tracksSourceIndexAfterSort();
+    void flags_rowsAreDragEnabledSelectableEnabled();
+    void flags_rowsAreNotEditable();
+    void flags_invalidIndexHasNoFlags();
 };
 
 void TestResultModel::emptyModel_hasNoRowsButFourColumns() {
@@ -181,6 +184,34 @@ void TestResultModel::entryAt_tracksSourceIndexAfterSort() {
     QCOMPARE(model.EntryAt(0).name, std::string("a.txt"));
     QCOMPARE(model.EntryAt(1).sourceIndex, 42u);
     QCOMPARE(model.EntryAt(1).name, std::string("z.txt"));
+}
+
+void TestResultModel::flags_rowsAreDragEnabledSelectableEnabled() {
+    ResultModel model;
+    std::vector<DisplayEntry> entries;
+    entries.push_back(MakeEntry("a.txt", "/home", "10 B", "2024-01-01 00:00", 10, 1000, 0));
+    model.SetEntries(entries);
+
+    const Qt::ItemFlags f = model.flags(model.index(0, ResultModel::kName));
+    QVERIFY(f.testFlag(Qt::ItemIsDragEnabled));
+    QVERIFY(f.testFlag(Qt::ItemIsSelectable));
+    QVERIFY(f.testFlag(Qt::ItemIsEnabled));
+}
+
+void TestResultModel::flags_rowsAreNotEditable() {
+    ResultModel model;
+    std::vector<DisplayEntry> entries;
+    entries.push_back(MakeEntry("a.txt", "/home", "10 B", "2024-01-01 00:00", 10, 1000, 0));
+    model.SetEntries(entries);
+
+    // QAbstractTableModel::flags() adds ItemIsEditable unconditionally; the
+    // result list has no in-place editing, so it must be cleared.
+    QVERIFY(!model.flags(model.index(0, ResultModel::kName)).testFlag(Qt::ItemIsEditable));
+}
+
+void TestResultModel::flags_invalidIndexHasNoFlags() {
+    ResultModel model;
+    QCOMPARE(model.flags(QModelIndex()), Qt::NoItemFlags);
 }
 
 QTEST_MAIN(TestResultModel)

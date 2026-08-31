@@ -1,14 +1,52 @@
 #include "ui/ResultView.h"
 
 #include <QApplication>
+#include <QByteArray>
 #include <QClipboard>
 #include <QContextMenuEvent>
 #include <QDrag>
 #include <QHeaderView>
 #include <QKeyEvent>
+#include <QList>
 #include <QUrl>
 
 namespace indexed {
+
+namespace {
+
+// How a set of files is being placed on the clipboard or drag: a plain
+// copy, or a "cut" that a file manager paste turns into a move.
+enum class FileTransfer { Copy, Cut, Drag };
+
+// Builds the file-object MIME payload every clipboard/drag path shares
+// (docs/adr/0013): text/uri-list for any freedesktop drop target,
+// x-special/gnome-copied-files so a Nautilus/Nemo/Caja/Thunar paste does
+// the right copy-or-move, and a plain-text path fallback for text editors.
+// Drag never carries the gnome cut/copy marker -- a drag is always a copy
+// here (ADR 0005) -- but does carry uri-list + text. Caller owns the result.
+QMimeData* BuildFileMimeData(const QStringList& paths, FileTransfer transfer) {
+    auto* mime = new QMimeData;
+
+    QList<QUrl> urls;
+    urls.reserve(paths.size());
+    for (const QString& path : paths) {
+        urls.append(QUrl::fromLocalFile(path));
+    }
+    mime->setUrls(urls);
+    mime->setText(paths.join('\n'));
+
+    if (transfer != FileTransfer::Drag) {
+        QByteArray gnome = transfer == FileTransfer::Cut ? "cut" : "copy";
+        for (const QUrl& url : urls) {
+            gnome += '\n';
+            gnome += url.toString().toUtf8();
+        }
+        mime->setData("x-special/gnome-copied-files", gnome);
+    }
+    return mime;
+}
+
+}  // namespace
 
 ResultView::ResultView(QWidget* parent) : QTreeView(parent) {
     setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -19,6 +57,7 @@ ResultView::ResultView(QWidget* parent) : QTreeView(parent) {
     setAllColumnsShowFocus(true);
     setSortingEnabled(true);
     setDragEnabled(true);
+    setDragDropMode(QAbstractItemView::DragOnly);  // drag out, never accept a drop
     header()->setSectionsMovable(true);
     // Size sorts descending-first (§19): intercept header clicks to flip the
     // indicator when the user first lands on the Size column. Qt's default
@@ -92,6 +131,16 @@ QMenu* ResultView::BuildContextMenu(QWidget* parent) {
 
     menu->addSeparator();
 
+    QAction* copy = menu->addAction(tr("Copy"));
+    copy->setObjectName("copyAction");
+    copy->setEnabled(!current.isEmpty());
+    connect(copy, &QAction::triggered, this, [this]() { CopySelectionToClipboard(); });
+
+    QAction* cut = menu->addAction(tr("Cut"));
+    cut->setObjectName("cutAction");
+    cut->setEnabled(!current.isEmpty());
+    connect(cut, &QAction::triggered, this, [this]() { CutSelectionToClipboard(); });
+
     QAction* copyPath = menu->addAction(tr("Copy Full Path"));
     copyPath->setObjectName("copyPathAction");
     connect(copyPath, &QAction::triggered, this, [this]() { CopySelectedFullPathsToClipboard(); });
@@ -104,14 +153,12 @@ QMenu* ResultView::BuildContextMenu(QWidget* parent) {
 }
 
 QMimeData* ResultView::BuildDragMimeData(const QList<int>& rows) const {
-    auto* mime = new QMimeData;
-    QList<QUrl> urls;
-    urls.reserve(rows.size());
+    QStringList paths;
+    paths.reserve(rows.size());
     for (int row : rows) {
-        urls.append(QUrl::fromLocalFile(FullPathForRow(row)));
+        paths.append(FullPathForRow(row));
     }
-    mime->setUrls(urls);
-    return mime;
+    return BuildFileMimeData(paths, FileTransfer::Drag);
 }
 
 void ResultView::keyPressEvent(QKeyEvent* event) {
@@ -140,19 +187,22 @@ void ResultView::keyPressEvent(QKeyEvent* event) {
         return;
     }
     if (ctrl && event->key() == Qt::Key_C) {
-        CopySelectedFullPathsToClipboard();
+        CopySelectionToClipboard();
         return;
     }
     if (ctrl && event->key() == Qt::Key_X) {
-        const QStringList paths = SelectedFullPathsOrCurrent();
-        if (!paths.isEmpty()) {
-            emit CutRequested(paths);
-        }
+        CutSelectionToClipboard();
         return;
     }
     if (event->key() == Qt::Key_Delete) {
         const QStringList paths = SelectedFullPathsOrCurrent();
-        if (!paths.isEmpty()) {
+        if (paths.isEmpty()) {
+            return;
+        }
+        // Shift+Delete permanently deletes; plain Delete moves to Trash.
+        if (event->modifiers().testFlag(Qt::ShiftModifier)) {
+            emit DeletePermanentlyRequested(paths);
+        } else {
             emit TrashRequested(paths);
         }
         return;
@@ -193,6 +243,20 @@ QStringList ResultView::SelectedFullPathsOrCurrent() const {
         }
     }
     return paths;
+}
+
+void ResultView::CopySelectionToClipboard() const {
+    const QStringList paths = SelectedFullPathsOrCurrent();
+    if (!paths.isEmpty()) {
+        QApplication::clipboard()->setMimeData(BuildFileMimeData(paths, FileTransfer::Copy));
+    }
+}
+
+void ResultView::CutSelectionToClipboard() const {
+    const QStringList paths = SelectedFullPathsOrCurrent();
+    if (!paths.isEmpty()) {
+        QApplication::clipboard()->setMimeData(BuildFileMimeData(paths, FileTransfer::Cut));
+    }
 }
 
 void ResultView::CopySelectedFullPathsToClipboard() const {

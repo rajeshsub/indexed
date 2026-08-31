@@ -53,8 +53,9 @@ private:
     void WireResultActions();
     void OpenPath(const QString& path);
     void RevealPath(const QString& path);
-    void CutToClipboard(const QStringList& paths);
     void TrashPaths(const QStringList& paths);
+    // Shift+Delete: irreversible unlink, gated behind a confirm dialog.
+    void DeletePermanently(const QStringList& paths);
     // Re-runs the on-screen query so index mutations (live monitoring, a
     // delete) show without the user retyping. Debounced via liveRefreshTimer_.
     void RefreshVisibleResults();

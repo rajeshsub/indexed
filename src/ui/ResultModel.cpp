@@ -72,6 +72,17 @@ QVariant ResultModel::data(const QModelIndex& index, int role) const {
     return QVariant();
 }
 
+Qt::ItemFlags ResultModel::flags(const QModelIndex& index) const {
+    if (!index.isValid()) {
+        return Qt::NoItemFlags;
+    }
+    // Rows are selectable and draggable (drag a result out to a file
+    // manager); nothing in this view is editable in place. ItemIsDragEnabled
+    // is what makes QAbstractItemView actually initiate a drag -- without it
+    // ResultView::startDrag is never reached.
+    return Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsDragEnabled;
+}
+
 QVariant ResultModel::headerData(int section, Qt::Orientation orientation, int role) const {
     if (orientation != Qt::Horizontal || role != Qt::DisplayRole) {
         return QAbstractTableModel::headerData(section, orientation, role);

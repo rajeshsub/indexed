@@ -11,7 +11,6 @@
 #include <QFileInfo>
 #include <QMenuBar>
 #include <QMessageBox>
-#include <QMimeData>
 #include <QStatusBar>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -29,6 +28,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <system_error>
 
 namespace indexed {
 
@@ -225,10 +225,10 @@ void MainWindow::WireResultActions() {
             [this](const QString& path) { OpenPath(path); });
     connect(resultView_, &ResultView::RevealRequested, this,
             [this](const QString& path) { RevealPath(path); });
-    connect(resultView_, &ResultView::CutRequested, this,
-            [this](const QStringList& paths) { CutToClipboard(paths); });
     connect(resultView_, &ResultView::TrashRequested, this,
             [this](const QStringList& paths) { TrashPaths(paths); });
+    connect(resultView_, &ResultView::DeletePermanentlyRequested, this,
+            [this](const QStringList& paths) { DeletePermanently(paths); });
 }
 
 void MainWindow::OpenPath(const QString& path) {
@@ -262,20 +262,25 @@ void MainWindow::RevealPath(const QString& path) {
     }
 }
 
-void MainWindow::CutToClipboard(const QStringList& paths) {
-    // Standard file-manager cut convention: uri-list plus the GNOME cut
-    // marker so paste in Nautilus/Thunar moves instead of copies.
-    auto* mime = new QMimeData;
-    QList<QUrl> urls;
-    QByteArray gnomeData = "cut";
-    for (const QString& path : paths) {
-        const QUrl url = QUrl::fromLocalFile(path);
-        urls.append(url);
-        gnomeData += "\n" + url.toString().toUtf8();
+void MainWindow::DeletePermanently(const QStringList& paths) {
+    const QString question =
+        paths.size() == 1
+            ? tr("Permanently delete this file? This cannot be undone.\n\n%1").arg(paths.first())
+            : tr("Permanently delete these %1 files? This cannot be undone.\n\n%2")
+                  .arg(paths.size())
+                  .arg(paths.join('\n'));
+    const auto answer = QMessageBox::warning(this, tr("indexed"), question,
+                                             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer != QMessageBox::Yes) {
+        return;
     }
-    mime->setUrls(urls);
-    mime->setData("x-special/gnome-copied-files", gnomeData);
-    QApplication::clipboard()->setMimeData(mime);
+    for (const QString& path : paths) {
+        std::error_code ec;
+        if (std::filesystem::remove(path.toStdString(), ec) && !ec) {
+            store_.ApplyRemove(path.toStdString());
+        }
+    }
+    RefreshVisibleResults();
 }
 
 void MainWindow::TrashPaths(const QStringList& paths) {

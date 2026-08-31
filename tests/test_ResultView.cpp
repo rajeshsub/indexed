@@ -1,6 +1,8 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QHeaderView>
+#include <QMimeData>
+#include <QMouseEvent>
 #include <QSignalSpy>
 #include <QTest>
 #include <QUrl>
@@ -47,12 +49,17 @@ private slots:
     void enterEmitsOpenRequestedForSingleSelection();
     void enterWithMultiSelectionEmitsNothing();
     void ctrlEnterEmitsRevealRequested();
-    void ctrlCCopiesFullPathsToClipboard();
-    void ctrlXEmitsCutRequested();
+    void ctrlCPutsFileObjectMimeOnClipboard();
+    void ctrlXPutsCutMarkerOnClipboard();
+    void copyMimeCarriesAllSelectedUris();
+    void contextCopyAndCutMatchKeyboard();
     void deleteEmitsTrashRequested();
+    void shiftDeleteEmitsDeletePermanentlyRequested();
     void contextMenuHasExpectedActions();
     void contextMenuOpenDisabledForMultiSelection();
-    void dragMimeDataIsUriList();
+    void dragMimeDataIsFileObjectPayload();
+    void dragActuallyInitiatesOnMouseDrag();
+    void viewIsDragOnly();
     void sizeHeaderFirstClickSortsDescending();
 
 private:
@@ -142,29 +149,87 @@ void TestResultView::ctrlEnterEmitsRevealRequested() {
     QCOMPARE(spy.at(0).at(0).toString(), QString("/home/user/alpha.txt"));
 }
 
-void TestResultView::ctrlCCopiesFullPathsToClipboard() {
+void TestResultView::ctrlCPutsFileObjectMimeOnClipboard() {
     ResultView* view = NewPopulatedView();
     view->setCurrentIndex(view->model()->index(1, 0));
     QTest::keyClick(view, Qt::Key_C, Qt::ControlModifier);
-    QCOMPARE(QApplication::clipboard()->text(), QString("/home/user/docs/beta.txt"));
+
+    const QMimeData* mime = QApplication::clipboard()->mimeData();
+    QVERIFY(mime->hasUrls());
+    QCOMPARE(mime->urls().size(), 1);
+    QCOMPARE(mime->urls().first(), QUrl::fromLocalFile("/home/user/docs/beta.txt"));
+    QVERIFY(mime->hasFormat("x-special/gnome-copied-files"));
+    QVERIFY(mime->data("x-special/gnome-copied-files").startsWith("copy\n"));
+    QCOMPARE(mime->text(), QString("/home/user/docs/beta.txt"));  // plain-text fallback
 }
 
-void TestResultView::ctrlXEmitsCutRequested() {
+void TestResultView::ctrlXPutsCutMarkerOnClipboard() {
     ResultView* view = NewPopulatedView();
-    QSignalSpy spy(view, &ResultView::CutRequested);
     view->setCurrentIndex(view->model()->index(0, 0));
     QTest::keyClick(view, Qt::Key_X, Qt::ControlModifier);
-    QCOMPARE(spy.count(), 1);
-    QCOMPARE(spy.at(0).at(0).toStringList(), QStringList{"/home/user/alpha.txt"});
+
+    const QMimeData* mime = QApplication::clipboard()->mimeData();
+    QVERIFY(mime->hasUrls());
+    QVERIFY(mime->data("x-special/gnome-copied-files").startsWith("cut\n"));
+}
+
+void TestResultView::copyMimeCarriesAllSelectedUris() {
+    ResultView* view = NewPopulatedView();
+    view->selectionModel()->select(view->model()->index(0, 0),
+                                   QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    view->selectionModel()->select(view->model()->index(2, 0),
+                                   QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    QTest::keyClick(view, Qt::Key_C, Qt::ControlModifier);
+
+    const QList<QUrl> urls = QApplication::clipboard()->mimeData()->urls();
+    QCOMPARE(urls.size(), 2);
+    QVERIFY(urls.contains(QUrl::fromLocalFile("/home/user/alpha.txt")));
+    QVERIFY(urls.contains(QUrl::fromLocalFile("/gamma.txt")));
+}
+
+void TestResultView::contextCopyAndCutMatchKeyboard() {
+    ResultView* view = NewPopulatedView();
+    view->setCurrentIndex(view->model()->index(0, 0));
+    QMenu* menu = view->BuildContextMenu(view);
+
+    QAction* copy = menu->findChild<QAction*>("copyAction");
+    QAction* cut = menu->findChild<QAction*>("cutAction");
+    QVERIFY(copy != nullptr);
+    QVERIFY(cut != nullptr);
+
+    copy->trigger();
+    QVERIFY(QApplication::clipboard()
+                ->mimeData()
+                ->data("x-special/gnome-copied-files")
+                .startsWith("copy\n"));
+    cut->trigger();
+    QVERIFY(QApplication::clipboard()
+                ->mimeData()
+                ->data("x-special/gnome-copied-files")
+                .startsWith("cut\n"));
+    delete menu;
 }
 
 void TestResultView::deleteEmitsTrashRequested() {
     ResultView* view = NewPopulatedView();
-    QSignalSpy spy(view, &ResultView::TrashRequested);
+    QSignalSpy trashSpy(view, &ResultView::TrashRequested);
+    QSignalSpy permaSpy(view, &ResultView::DeletePermanentlyRequested);
     view->setCurrentIndex(view->model()->index(2, 0));
     QTest::keyClick(view, Qt::Key_Delete);
-    QCOMPARE(spy.count(), 1);
-    QCOMPARE(spy.at(0).at(0).toStringList(), QStringList{"/gamma.txt"});
+    QCOMPARE(trashSpy.count(), 1);
+    QCOMPARE(permaSpy.count(), 0);
+    QCOMPARE(trashSpy.at(0).at(0).toStringList(), QStringList{"/gamma.txt"});
+}
+
+void TestResultView::shiftDeleteEmitsDeletePermanentlyRequested() {
+    ResultView* view = NewPopulatedView();
+    QSignalSpy trashSpy(view, &ResultView::TrashRequested);
+    QSignalSpy permaSpy(view, &ResultView::DeletePermanentlyRequested);
+    view->setCurrentIndex(view->model()->index(1, 0));
+    QTest::keyClick(view, Qt::Key_Delete, Qt::ShiftModifier);
+    QCOMPARE(permaSpy.count(), 1);
+    QCOMPARE(trashSpy.count(), 0);
+    QCOMPARE(permaSpy.at(0).at(0).toStringList(), QStringList{"/home/user/docs/beta.txt"});
 }
 
 void TestResultView::contextMenuHasExpectedActions() {
@@ -173,6 +238,8 @@ void TestResultView::contextMenuHasExpectedActions() {
     QMenu* menu = view->BuildContextMenu(view);
     QVERIFY(menu->findChild<QAction*>("openAction") != nullptr);
     QVERIFY(menu->findChild<QAction*>("revealAction") != nullptr);
+    QVERIFY(menu->findChild<QAction*>("copyAction") != nullptr);
+    QVERIFY(menu->findChild<QAction*>("cutAction") != nullptr);
     QVERIFY(menu->findChild<QAction*>("copyPathAction") != nullptr);
     QVERIFY(menu->findChild<QAction*>("copyNameAction") != nullptr);
     QVERIFY(menu->findChild<QAction*>("openAction")->isEnabled());
@@ -190,7 +257,7 @@ void TestResultView::contextMenuOpenDisabledForMultiSelection() {
     delete menu;
 }
 
-void TestResultView::dragMimeDataIsUriList() {
+void TestResultView::dragMimeDataIsFileObjectPayload() {
     ResultView* view = NewPopulatedView();
     QMimeData* mime = view->BuildDragMimeData({0, 2});
     QVERIFY(mime->hasUrls());
@@ -198,7 +265,58 @@ void TestResultView::dragMimeDataIsUriList() {
     QCOMPARE(urls.size(), 2);
     QCOMPARE(urls[0], QUrl::fromLocalFile("/home/user/alpha.txt"));
     QCOMPARE(urls[1], QUrl::fromLocalFile("/gamma.txt"));
+    QCOMPARE(mime->text(), QString("/home/user/alpha.txt\n/gamma.txt"));
+    // A drag is always a copy (docs/adr/0005): no gnome cut/copy marker.
+    QVERIFY(!mime->hasFormat("x-special/gnome-copied-files"));
     delete mime;
+}
+
+namespace {
+
+// Records startDrag() calls without opening the modal QDrag::exec, so the
+// real mouse-drag gesture can be verified end to end. startDrag is only
+// reached when the pressed index is Qt::ItemIsDragEnabled (docs/adr/0013) --
+// the whole point of the regression guard below.
+class DragProbeView : public ResultView {
+public:
+    int startDragCalls = 0;
+
+protected:
+    void startDrag(Qt::DropActions) override { ++startDragCalls; }
+};
+
+}  // namespace
+
+void TestResultView::dragActuallyInitiatesOnMouseDrag() {
+    auto* model = new ResultModel(this);
+    model->SetEntries(ThreeEntries());
+    auto* view = new DragProbeView;
+    owned_.push_back(view);
+    view->SetResultModel(model);
+    view->resize(800, 400);
+    view->show();
+    QVERIFY(QTest::qWaitForWindowExposed(view));
+
+    const QModelIndex idx = view->model()->index(0, 0);
+    QVERIFY(view->model()->flags(idx).testFlag(Qt::ItemIsDragEnabled));
+
+    const QRect rowRect = view->visualRect(idx);
+    const QPoint press = rowRect.center();
+    const QPoint release = press + QPoint(QApplication::startDragDistance() * 3, 0);
+
+    QTest::mousePress(view->viewport(), Qt::LeftButton, {}, press);
+    QMouseEvent move(QEvent::MouseMove, release, view->viewport()->mapToGlobal(release),
+                     Qt::LeftButton, Qt::LeftButton, {});
+    QApplication::sendEvent(view->viewport(), &move);
+    QTest::mouseRelease(view->viewport(), Qt::LeftButton, {}, release);
+
+    QCOMPARE(view->startDragCalls, 1);
+}
+
+void TestResultView::viewIsDragOnly() {
+    ResultView* view = NewPopulatedView();
+    QCOMPARE(view->dragDropMode(), QAbstractItemView::DragOnly);
+    QVERIFY(view->dragEnabled());
 }
 
 void TestResultView::sizeHeaderFirstClickSortsDescending() {
