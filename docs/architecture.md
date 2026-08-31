@@ -56,9 +56,12 @@ Qt-dependent code.
 2. **Search:** query text -> `SearchEngine` dispatches to RE2 (regex mode), SIMD substring
    search, or token-set matching (word-level, e.g. `just rosy guitar`) depending on active
    search modes -> results streamed into `ResultModel`/`ResultView`.
-3. **Live update:** filesystem change -> `FanotifyMonitor`/`InotifyWatcher` in
-   `indexed-helper` -> applied into `IndexStore` under lock -> GUI notified to refresh the
-   current query so new/changed/removed files reflect instantly.
+3. **Live update:** filesystem change -> `InotifyWatcher` (unprivileged, in the GUI) or
+   `FanotifyMonitor` (in `indexed-helper` when elevated) -> `Indexer::ApplyChangeEvent`
+   applies it into `IndexStore` under lock. Unprivileged path: `Indexer`'s `MutationCallback`
+   fires, `MainWindow` debounces (`liveRefreshTimer_`, 400 ms) and re-runs the visible query.
+   Elevated path: the helper rewrites `.idx`, the GUI's `QFileSystemWatcher` reloads it and
+   re-queries. Either way new/changed/removed files reflect within a second or two.
 4. **Settings change:** GUI diffs old vs. new `SelectedRoots`/`ExcludedPaths` -> incremental
    `IndexPaths`/`RemovePaths` on `Indexer`, not a full rebuild.
 

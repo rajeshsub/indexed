@@ -117,9 +117,15 @@ Available from the menu bar (First-Run dialog shows the same fields on first lau
 | `Up` / `Down` (in search box) | Move selection in the result list |
 | `Enter` | Open selected file |
 | `Ctrl+Enter` | Open containing folder |
-| `Ctrl+C` | Copy full path(s) |
-| `Ctrl+X` | Cut (move) |
+| `Ctrl+C` | Copy file(s) (paste into a file manager copies the file; plain-text path elsewhere) |
+| `Ctrl+X` | Cut file(s) (paste into a file manager moves the file) |
 | `Delete` | Move to Trash |
+| `Shift+Delete` | Delete permanently (asks first) |
+
+Drag a result onto a file manager to copy it there. `Ctrl+X` and drag-copy
+follow the freedesktop `text/uri-list` and `x-special/gnome-copied-files`
+conventions understood by Nautilus, Nemo, Caja, and Thunar; Dolphin pastes a
+copy in every case.
 
 ## Privileged monitoring
 

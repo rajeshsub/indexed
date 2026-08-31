@@ -5,7 +5,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `Shift+Delete` in the result list permanently deletes the selected file(s)
+  after a confirmation dialog; plain `Delete` still moves to Trash without
+  asking (`docs/adr/0013`).
+- Right-click Copy and Cut entries in the result context menu, matching the
+  `Ctrl+C` / `Ctrl+X` behaviour.
+
+### Changed
+- `Ctrl+C` now copies the file object, not just its path: pasting into
+  Nautilus, Nemo, Caja, or Thunar copies the actual file, while a plain-text
+  path is still available for text editors. `Ctrl+X` is its move-on-paste
+  counterpart. Supersedes `docs/adr/0005` with `docs/adr/0013`.
+
 ### Fixed
+- Live monitoring changes now reach the results view. A file created, copied
+  in from a USB drive or network share, or deleted under a monitored folder
+  did not change the visible search results until a manual "Rebuild Index
+  Now": `WalkScanner` could not scan a single-file path (so newly added files
+  were never indexed), and even a correct index change did not refresh the
+  on-screen query. Both are fixed; bursts of changes are coalesced into one
+  refresh.
+- Dragging a result row out to a file manager now works. `ResultModel` did
+  not mark its rows drag-enabled, so the view never started the drag.
 - Crash on first launch: `IndexStore::AddEntry` was called concurrently by
   `WalkScanner`'s worker threads without a lock, corrupting the staging pool's
   heap ("double free or corruption"). It now takes the same exclusive lock as

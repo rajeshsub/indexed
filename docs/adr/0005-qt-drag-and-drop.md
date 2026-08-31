@@ -1,4 +1,4 @@
-Status: Accepted
+Status: Superseded by ADR-0013
 
 ## Context
 

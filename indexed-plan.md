@@ -622,10 +622,11 @@ Payload:
 | Down / Up | Move focus from search box into results list |
 | Enter | Open selected file |
 | Ctrl+Enter | Open containing folder (reveal + select) |
-| Ctrl+C | Copy full path(s) |
-| Ctrl+X | Cut (mark for move) |
+| Ctrl+C | Copy file(s) -- file-object paste into a file manager, plain-text path elsewhere (`docs/adr/0013`) |
+| Ctrl+X | Cut file(s) -- file-object paste into a file manager moves them |
 | Delete | Move to Trash |
-| Drag | Drag file(s) out to a file manager (`text/uri-list`) |
+| Shift+Delete | Delete permanently (confirm dialog) -- **added post-M6** (`docs/adr/0013`) |
+| Drag | Drag file(s) out to a file manager (`text/uri-list` + `x-special/gnome-copied-files`) |
 
 ### 12.3 Default excluded paths (Linux equivalents of winindex's Windows defaults)
 

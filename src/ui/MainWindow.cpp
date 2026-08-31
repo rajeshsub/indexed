@@ -274,23 +274,40 @@ void MainWindow::DeletePermanently(const QStringList& paths) {
     if (answer != QMessageBox::Yes) {
         return;
     }
+    QStringList failed;
     for (const QString& path : paths) {
         std::error_code ec;
-        if (std::filesystem::remove(path.toStdString(), ec) && !ec) {
+        if (std::filesystem::remove(path.toStdString(), ec)) {
             store_.ApplyRemove(path.toStdString());
+        } else {
+            failed.append(ec ? tr("%1 (%2)").arg(path, QString::fromStdString(ec.message()))
+                             : path);
         }
     }
     RefreshVisibleResults();
+    ReportDeletionFailures(tr("delete"), failed);
 }
 
 void MainWindow::TrashPaths(const QStringList& paths) {
+    QStringList failed;
     for (const QString& path : paths) {
-        QFile file(path);
-        if (file.moveToTrash()) {
+        if (QFile(path).moveToTrash()) {
             store_.ApplyRemove(path.toStdString());
+        } else {
+            failed.append(path);
         }
     }
     RefreshVisibleResults();  // trashed entries disappear immediately
+    ReportDeletionFailures(tr("move to Trash"), failed);
+}
+
+void MainWindow::ReportDeletionFailures(const QString& verb, const QStringList& failed) {
+    if (failed.isEmpty()) {
+        return;
+    }
+    QMessageBox::warning(
+        this, tr("indexed"),
+        tr("Could not %1 %n file(s):\n\n%2", nullptr, failed.size()).arg(verb, failed.join('\n')));
 }
 
 void MainWindow::RefreshVisibleResults() {

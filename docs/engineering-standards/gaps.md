@@ -17,3 +17,13 @@ the same session. None deferred or declined.
 
 See `applied.md` for the verified gate list and what remains unverified (CI-only steps
 not exercised by a push this session).
+
+## Test-integrity findings (2026-08-31)
+
+Not standards-selection gaps, but defects the existing tests failed to catch because they
+asserted on code paths the running application never reached (rule 3):
+
+| # | Finding | Decision | Date |
+|---|---------|----------|------|
+| 10 | `ResultView` drag-out was dead in the app -- `ResultModel` never overrode `flags()`, so rows lacked `Qt::ItemIsDragEnabled` and `QAbstractItemView` never called `startDrag`. The DnD tests passed by calling `startDrag`/`BuildDragMimeData` directly. | Fixed + real-gesture test added (`docs/adr/0013`) | 2026-08-31 |
+| 11 | Unprivileged live indexing did not refresh the results view, and `WalkScanner` could not scan a single-file path, so `Indexer::ApplyChangeEvent`'s Added path never indexed a new file. `test_Indexer` passed against a mock scanner that ignored the root type. | Fixed + `WalkScanner` file-root tests + `Indexer` mutation-callback tests added | 2026-08-31 |
