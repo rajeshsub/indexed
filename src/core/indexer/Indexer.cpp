@@ -8,11 +8,13 @@
 namespace indexed {
 
 Indexer::Indexer(IFileSystemScanner& scanner, IIndexStore& store,
-                 ChangeMonitorFactory monitorFactory, StatusCallback statusCallback)
+                 ChangeMonitorFactory monitorFactory, StatusCallback statusCallback,
+                 MutationCallback mutationCallback)
     : scanner_(scanner),
       store_(store),
       monitorFactory_(std::move(monitorFactory)),
-      statusCallback_(std::move(statusCallback)) {}
+      statusCallback_(std::move(statusCallback)),
+      mutationCallback_(std::move(mutationCallback)) {}
 
 void Indexer::ReportStatus(IndexerState state, std::string message, uint64_t filesIndexed,
                            std::vector<std::string> locations, uint64_t indexAgeSeconds) {
@@ -125,9 +127,11 @@ void Indexer::ApplyChangeEvent(const FileChangeEvent& event) {
     switch (event.type) {
         case FileChangeType::Removed:
             store_.ApplyRemove(event.path);
+            NotifyMutation();
             return;
         case FileChangeType::Renamed:
             store_.ApplyRename(event.oldPath, event.path);
+            NotifyMutation();
             return;
         case FileChangeType::Modified:
             // Pool entries are append-only (docs/adr/0006) -- there is no
@@ -155,8 +159,19 @@ void Indexer::ApplyChangeEvent(const FileChangeEvent& event) {
             if (found) {
                 store_.ApplyAdd(entry);
             }
+            // A Modified event always mutated (the ApplyRemove above); an
+            // Added event only mutated if the re-scan found the file.
+            if (found || event.type == FileChangeType::Modified) {
+                NotifyMutation();
+            }
             return;
         }
+    }
+}
+
+void Indexer::NotifyMutation() {
+    if (mutationCallback_) {
+        mutationCallback_();
     }
 }
 

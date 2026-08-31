@@ -5,6 +5,7 @@
 #include <QLabel>
 #include <QMainWindow>
 #include <QProcess>
+#include <QTimer>
 
 #include "indexer/Indexer.h"
 #include "platform/MountEnumerator.h"
@@ -54,6 +55,9 @@ private:
     void RevealPath(const QString& path);
     void CutToClipboard(const QStringList& paths);
     void TrashPaths(const QStringList& paths);
+    // Re-runs the on-screen query so index mutations (live monitoring, a
+    // delete) show without the user retyping. Debounced via liveRefreshTimer_.
+    void RefreshVisibleResults();
     void ShowSettingsDialog();
     void ShowAbout();
     void UpdateIdleStatus();
@@ -97,6 +101,7 @@ private:
 
     std::atomic<bool> localMonitorStop_{false};
     std::thread localMonitorThread_;
+    QTimer* liveRefreshTimer_ = nullptr;
 
     QProcess* helperProcess_ = nullptr;
     QFileSystemWatcher* helperWatcher_ = nullptr;

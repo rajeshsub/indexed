@@ -352,6 +352,58 @@ TEST(Indexer, ApplyChangeEventModifiedRemovesStaleThenRescansAndAdds) {
     indexer.ApplyChangeEvent(event);
 }
 
+TEST(Indexer, ApplyChangeEventFiresMutationCallbackOncePerAppliedChange) {
+    NiceMock<MockFileSystemScanner> scanner;
+    NiceMock<MockIndexStore> store;
+    ON_CALL(scanner, Scan(_, _, _, _))
+        .WillByDefault(Invoke([](const ScanOptions&, indexed::ScanCallback onEntry,
+                                 indexed::ProgressCallback, const std::atomic<bool>&) {
+            onEntry(MakeEntry("f.txt", "/home/user/f.txt", 1, 2));
+        }));
+
+    int mutations = 0;
+    Indexer indexer(scanner, store, nullptr, nullptr, [&mutations]() { ++mutations; });
+
+    FileChangeEvent added;
+    added.type = FileChangeType::Added;
+    added.path = "/home/user/f.txt";
+    indexer.ApplyChangeEvent(added);
+    EXPECT_EQ(mutations, 1);
+
+    FileChangeEvent removed;
+    removed.type = FileChangeType::Removed;
+    removed.path = "/home/user/f.txt";
+    indexer.ApplyChangeEvent(removed);
+    EXPECT_EQ(mutations, 2);
+
+    FileChangeEvent renamed;
+    renamed.type = FileChangeType::Renamed;
+    renamed.oldPath = "/home/user/f.txt";
+    renamed.path = "/home/user/g.txt";
+    indexer.ApplyChangeEvent(renamed);
+    EXPECT_EQ(mutations, 3);
+}
+
+TEST(Indexer, ApplyChangeEventAddedDoesNotFireMutationCallbackWhenRescanFindsNothing) {
+    NiceMock<MockFileSystemScanner> scanner;
+    NiceMock<MockIndexStore> store;
+    // Scanner reports nothing for the path (file vanished before re-scan).
+    EXPECT_CALL(scanner, Scan(_, _, _, _))
+        .WillOnce(Invoke([](const ScanOptions&, indexed::ScanCallback, indexed::ProgressCallback,
+                            const std::atomic<bool>&) {}));
+    EXPECT_CALL(store, ApplyAdd(_)).Times(0);
+
+    int mutations = 0;
+    Indexer indexer(scanner, store, nullptr, nullptr, [&mutations]() { ++mutations; });
+
+    FileChangeEvent added;
+    added.type = FileChangeType::Added;
+    added.path = "/home/user/ghost.txt";
+    indexer.ApplyChangeEvent(added);
+
+    EXPECT_EQ(mutations, 0);
+}
+
 TEST(Indexer, StartLiveMonitoringStartsOneMonitorPerRootWithCorrectRoot) {
     NiceMock<MockFileSystemScanner> scanner;
     NiceMock<MockIndexStore> store;

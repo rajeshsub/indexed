@@ -60,9 +60,25 @@ MainWindow::MainWindow(Settings& settings, IndexStore& store, ISearchEngine& eng
     // process never has CAP_SYS_ADMIN, so this is the only backend it could
     // ever use for its own local monitoring; FanotifyMonitor only runs
     // inside the privileged indexed-helper (see ElevateForFullAccess).
-    indexer_ = std::make_unique<Indexer>(scanner_, store_, [](const std::string&) {
-        return std::unique_ptr<IChangeMonitor>(std::make_unique<InotifyWatcher>());
-    });
+    // Coalesces bursts of live filesystem changes (e.g. a large copy from a
+    // USB drive or a network share) into a single on-screen refresh.
+    liveRefreshTimer_ = new QTimer(this);
+    liveRefreshTimer_->setSingleShot(true);
+    liveRefreshTimer_->setInterval(400);
+    connect(liveRefreshTimer_, &QTimer::timeout, this, &MainWindow::RefreshVisibleResults);
+
+    indexer_ = std::make_unique<Indexer>(
+        scanner_, store_,
+        [](const std::string&) {
+            return std::unique_ptr<IChangeMonitor>(std::make_unique<InotifyWatcher>());
+        },
+        /*statusCallback=*/nullptr,
+        // Called on a monitor thread: hop to the GUI thread and (re)start
+        // the coalescing timer rather than re-querying inline.
+        [this]() {
+            QMetaObject::invokeMethod(
+                this, [this]() { liveRefreshTimer_->start(); }, Qt::QueuedConnection);
+        });
 
     auto* central = new QWidget(this);
     auto* layout = new QVBoxLayout(central);
@@ -269,7 +285,13 @@ void MainWindow::TrashPaths(const QStringList& paths) {
             store_.ApplyRemove(path.toStdString());
         }
     }
-    // Refresh the current query so trashed entries disappear immediately.
+    RefreshVisibleResults();  // trashed entries disappear immediately
+}
+
+void MainWindow::RefreshVisibleResults() {
+    // Re-run whatever query is on screen so index changes (live monitoring,
+    // a delete, a trash) are reflected without the user retyping. A query
+    // under 2 chars shows no results, so there is nothing to refresh.
     if (searchBox_->text().size() >= 2) {
         coordinator_->SetQuery(searchBox_->text());
     }

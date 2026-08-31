@@ -111,6 +111,33 @@ private:
     int inFlight_ = 0;
 };
 
+// Builds a FileEntry from a completed statx and hands it to onEntry. `name`
+// is the final path component; `path` is the full path. Shared by the
+// directory-walk emit path and the single-file-root path so the two never
+// drift on size/mtime units or the hidden/directory attribute rules.
+void EmitFileEntry(const std::string& fullPath, const struct statx& stx,
+                   const ScanCallback& onEntry) {
+    const size_t slash = fullPath.find_last_of('/');
+    std::string name = slash == std::string::npos ? fullPath : fullPath.substr(slash + 1);
+
+    uint32_t attributes = 0;
+    if (S_ISDIR(stx.stx_mode)) {
+        attributes |= kAttrDirectory;
+    }
+    if (!name.empty() && name.front() == '.') {
+        attributes |= kAttrHidden;
+    }
+
+    FileEntry fileEntry;
+    fileEntry.name = std::move(name);
+    fileEntry.path = fullPath;
+    fileEntry.size = stx.stx_size;
+    fileEntry.lastModified = static_cast<uint64_t>(stx.stx_mtime.tv_sec) * 1'000'000'000ULL +
+                             static_cast<uint64_t>(stx.stx_mtime.tv_nsec);
+    fileEntry.attributes = attributes;
+    onEntry(fileEntry);
+}
+
 void ProcessDirectory(const DirJob& job, const std::vector<std::string>& canonicalRoots,
                       const std::vector<std::string>& excludedNormalized, DirectoryQueue& queue,
                       const ScanCallback& onEntry, const ProgressCallback& onProgress,
@@ -158,25 +185,9 @@ void ProcessDirectory(const DirJob& job, const std::vector<std::string>& canonic
                 continue;
             }
 
-            bool isDir = S_ISDIR(stx.stx_mode);
-            uint32_t attributes = 0;
-            if (isDir) {
-                attributes |= kAttrDirectory;
-            }
-            if (!name.empty() && name.front() == '.') {
-                attributes |= kAttrHidden;
-            }
+            const bool isDir = S_ISDIR(stx.stx_mode);
 
-            FileEntry fileEntry;
-            fileEntry.name = std::string(name);
-            fileEntry.path = childPath;
-            fileEntry.size = stx.stx_size;
-            fileEntry.lastModified =
-                static_cast<uint64_t>(stx.stx_mtime.tv_sec) * 1'000'000'000ULL +
-                static_cast<uint64_t>(stx.stx_mtime.tv_nsec);
-            fileEntry.attributes = attributes;
-
-            onEntry(fileEntry);
+            EmitFileEntry(childPath, stx, onEntry);
             filesFound.fetch_add(1, std::memory_order_relaxed);
 
             if (isDir) {
@@ -213,20 +224,33 @@ void WalkScanner::Scan(const ScanOptions& options, ScanCallback onEntry,
     std::transform(options.excludedPaths.begin(), options.excludedPaths.end(),
                    excludedNormalized.begin(), CanonicalizeBestEffort);
 
+    std::atomic<uint64_t> filesFound{0};
+
     DirectoryQueue queue;
     for (const auto& root : canonicalRoots) {
         if (IsPathExcluded(root, excludedNormalized)) {
             continue;
         }
         struct statx stx{};
-        if (statx(AT_FDCWD, root.c_str(), AT_STATX_DONT_SYNC, STATX_TYPE, &stx) != 0) {
+        if (statx(AT_FDCWD, root.c_str(), AT_STATX_DONT_SYNC | AT_SYMLINK_NOFOLLOW,
+                  STATX_SIZE | STATX_MTIME | STATX_TYPE | STATX_MODE, &stx) != 0) {
             continue;  // root does not exist / not accessible; skip it
+        }
+        if (S_ISLNK(stx.stx_mode)) {
+            continue;  // no-follow-symlinks policy applies to roots too
+        }
+        if (!S_ISDIR(stx.stx_mode)) {
+            // A regular-file root: emit it directly rather than trying to
+            // openat() it O_DIRECTORY. Callers use this to (re-)stat a
+            // single changed file (Indexer::ApplyChangeEvent's Added path).
+            EmitFileEntry(root, stx, onEntry);
+            filesFound.fetch_add(1, std::memory_order_relaxed);
+            onProgress(filesFound.load(std::memory_order_relaxed), root);
+            continue;
         }
         dev_t rootDev = makedev(stx.stx_dev_major, stx.stx_dev_minor);
         queue.Push(DirJob{root, rootDev});
     }
-
-    std::atomic<uint64_t> filesFound{0};
     unsigned int workerCount = std::thread::hardware_concurrency();
     if (workerCount == 0) {
         workerCount = 1;

@@ -333,6 +333,86 @@ TEST(WalkScanner, ProgressCallbackFires) {
     EXPECT_GT(sink.ProgressCalls(), 0);
 }
 
+TEST(WalkScanner, SingleRegularFileRootEmitsThatFileOnly) {
+    TempDir tempDir;
+    ASSERT_FALSE(tempDir.Path().empty());
+
+    const std::string filePath = tempDir.Path() + "/lonely.txt";
+    WriteFile(filePath, "twelve bytes");  // 12 bytes
+
+    CollectingSink sink;
+    ScanOptions options;
+    options.rootPaths = {filePath};
+    std::atomic<bool> cancelToken{false};
+
+    WalkScanner scanner;
+    scanner.Scan(
+        options, [&](const FileEntry& entry) { sink.OnEntry(entry); },
+        [&](uint64_t filesFound, const std::string& currentDir) {
+            sink.OnProgress(filesFound, currentDir);
+        },
+        cancelToken);
+
+    EXPECT_EQ(sink.Count(), 1u);
+    auto entry = sink.Find(filePath);
+    ASSERT_TRUE(entry.has_value());
+    EXPECT_EQ(entry->name, "lonely.txt");
+    EXPECT_EQ(entry->path, filePath);
+    EXPECT_EQ(entry->size, std::string("twelve bytes").size());
+    EXPECT_GT(entry->lastModified, 0u);
+    EXPECT_EQ(entry->attributes & kAttrDirectory, 0u);
+    EXPECT_EQ(entry->attributes & kAttrHidden, 0u);
+}
+
+TEST(WalkScanner, NonexistentFileRootEmitsNothing) {
+    TempDir tempDir;
+    ASSERT_FALSE(tempDir.Path().empty());
+
+    CollectingSink sink;
+    ScanOptions options;
+    options.rootPaths = {tempDir.Path() + "/does_not_exist.txt"};
+    std::atomic<bool> cancelToken{false};
+
+    WalkScanner scanner;
+    scanner.Scan(
+        options, [&](const FileEntry& entry) { sink.OnEntry(entry); },
+        [&](uint64_t filesFound, const std::string& currentDir) {
+            sink.OnProgress(filesFound, currentDir);
+        },
+        cancelToken);
+
+    EXPECT_EQ(sink.Count(), 0u);
+}
+
+TEST(WalkScanner, MixedFileAndDirectoryRootsBothContribute) {
+    TempDir tempDir;
+    ASSERT_FALSE(tempDir.Path().empty());
+
+    fs::create_directories(tempDir.Path() + "/tree");
+    WriteFile(tempDir.Path() + "/tree/inside.txt", "a");
+    const std::string looseFile = tempDir.Path() + "/loose.txt";
+    WriteFile(looseFile, "bb");
+
+    CollectingSink sink;
+    ScanOptions options;
+    options.rootPaths = {tempDir.Path() + "/tree", looseFile};
+    std::atomic<bool> cancelToken{false};
+
+    WalkScanner scanner;
+    scanner.Scan(
+        options, [&](const FileEntry& entry) { sink.OnEntry(entry); },
+        [&](uint64_t filesFound, const std::string& currentDir) {
+            sink.OnProgress(filesFound, currentDir);
+        },
+        cancelToken);
+
+    EXPECT_TRUE(sink.Contains(tempDir.Path() + "/tree/inside.txt"));
+    EXPECT_TRUE(sink.Contains(looseFile));
+    auto looseEntry = sink.Find(looseFile);
+    ASSERT_TRUE(looseEntry.has_value());
+    EXPECT_EQ(looseEntry->name, "loose.txt");
+}
+
 // Mount-boundary crossing (st_dev differs from the root's own st_dev) is not
 // covered by an automated test here: reliably fabricating a second mount
 // point requires root privileges (a loopback/bind mount) which is not

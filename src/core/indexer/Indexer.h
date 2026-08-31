@@ -28,6 +28,15 @@ struct IndexerStatus {
 
 using StatusCallback = std::function<void(const IndexerStatus&)>;
 
+// Invoked once after ApplyChangeEvent has actually mutated the store in
+// response to a live filesystem change (a file added, removed, renamed, or
+// re-added after modification). Not fired when an event resolved to no
+// store change (e.g. an Added path that no longer exists by the time it is
+// re-scanned). The GUI uses this to refresh whatever query is currently on
+// screen so live changes appear without a manual rebuild; core stays
+// Qt-free by taking a plain std::function, exactly like StatusCallback.
+using MutationCallback = std::function<void()>;
+
 // Produces an IChangeMonitor for a given root. A real factory (M5) will
 // choose FanotifyMonitor vs InotifyWatcher per indexed-plan.md §7.2's
 // selection logic; Indexer itself stays agnostic and only depends on the
@@ -44,7 +53,7 @@ using ChangeMonitorFactory =
 class Indexer {
 public:
     Indexer(IFileSystemScanner& scanner, IIndexStore& store, ChangeMonitorFactory monitorFactory,
-            StatusCallback statusCallback = nullptr);
+            StatusCallback statusCallback = nullptr, MutationCallback mutationCallback = nullptr);
 
     // If !force and a valid, non-stale (age <= staleThresholdSeconds) index
     // exists at idxFilePath, loads it into the store (LoadingIndex -> Idle).
@@ -96,11 +105,13 @@ public:
 private:
     void ReportStatus(IndexerState state, std::string message, uint64_t filesIndexed,
                       std::vector<std::string> locations, uint64_t indexAgeSeconds);
+    void NotifyMutation();
 
     IFileSystemScanner& scanner_;
     IIndexStore& store_;
     ChangeMonitorFactory monitorFactory_;
     StatusCallback statusCallback_;
+    MutationCallback mutationCallback_;
 };
 
 }  // namespace indexed
