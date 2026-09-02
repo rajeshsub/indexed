@@ -60,6 +60,9 @@ private slots:
     void dragInitiationPreconditionsHold();
     void viewIsDragOnly();
     void sizeHeaderFirstClickSortsDescending();
+    void restoreSelectionFollowsRowsByPathAcrossReset();
+    void restoreSelectionDropsRowsThatVanished();
+    void restoreSelectionReinstatesKeyboardFocus();
 
 private:
     // Fresh view+model wired together, populated with ThreeEntries().
@@ -302,6 +305,80 @@ void TestResultView::sizeHeaderFirstClickSortsDescending() {
     QCOMPARE(view->header()->sortIndicatorOrder(), Qt::DescendingOrder);
     // Largest first after the descending sort.
     QCOMPARE(view->Model()->EntryAt(0).sizeBytes, 900u);
+}
+
+void TestResultView::restoreSelectionFollowsRowsByPathAcrossReset() {
+    // Live monitoring re-runs the query, which is a full ResultModel reset;
+    // SnapshotSelection + RestoreSelection keep the user on the same files
+    // even when the new result set has them at different row indices.
+    ResultView* view = NewPopulatedView();
+    // setCurrentIndex first: on an ExtendedSelection view it replaces the
+    // selection with the current row, so it has to precede the extension.
+    view->setCurrentIndex(view->model()->index(2, 0));          // current == gamma.txt
+    view->selectionModel()->select(view->model()->index(0, 0),  // alpha.txt
+                                   QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    view->selectionModel()->select(view->model()->index(2, 0),  // gamma.txt
+                                   QItemSelectionModel::Select | QItemSelectionModel::Rows);
+
+    const ResultView::SelectionSnapshot snapshot = view->SnapshotSelection();
+    QCOMPARE(snapshot.selectedPaths.size(), 2);
+
+    // Same three files, reordered, plus a new one -- as a live refresh might
+    // return after an unrelated file was created.
+    view->Model()->SetEntries({
+        MakeEntry("gamma.txt", "/", 50, 2'000'000'000ULL),
+        MakeEntry("delta.txt", "/home/user", 10, 4'000'000'000ULL),
+        MakeEntry("beta.txt", "/home/user/docs", 900, 1'000'000'000ULL),
+        MakeEntry("alpha.txt", "/home/user", 100, 3'000'000'000ULL),
+    });
+    view->RestoreSelection(snapshot);
+
+    const QStringList selected = view->SelectedFullPaths();
+    QCOMPARE(selected.size(), 2);
+    QVERIFY(selected.contains("/home/user/alpha.txt"));
+    QVERIFY(selected.contains("/gamma.txt"));
+    QCOMPARE(view->FullPathForRow(view->currentIndex().row()), QString("/gamma.txt"));
+}
+
+void TestResultView::restoreSelectionDropsRowsThatVanished() {
+    // A selected file deleted out from under the user (trash, external rm)
+    // simply drops from the selection -- no crash, no stale row.
+    ResultView* view = NewPopulatedView();
+    view->setCurrentIndex(view->model()->index(1, 0));          // current == beta.txt
+    view->selectionModel()->select(view->model()->index(0, 0),  // alpha.txt
+                                   QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    view->selectionModel()->select(view->model()->index(1, 0),  // beta.txt
+                                   QItemSelectionModel::Select | QItemSelectionModel::Rows);
+
+    const ResultView::SelectionSnapshot snapshot = view->SnapshotSelection();
+    QCOMPARE(snapshot.selectedPaths.size(), 2);
+
+    view->Model()->SetEntries({
+        MakeEntry("alpha.txt", "/home/user", 100, 3'000'000'000ULL),
+        MakeEntry("gamma.txt", "/", 50, 2'000'000'000ULL),
+    });
+    view->RestoreSelection(snapshot);
+
+    const QStringList selected = view->SelectedFullPaths();
+    QCOMPARE(selected.size(), 1);
+    QVERIFY(selected.contains("/home/user/alpha.txt"));
+    QVERIFY(!selected.contains("/home/user/docs/beta.txt"));
+}
+
+void TestResultView::restoreSelectionReinstatesKeyboardFocus() {
+    ResultView* view = NewPopulatedView();
+    view->show();
+    QVERIFY(QTest::qWaitForWindowExposed(view));
+    view->setFocus();
+    QVERIFY(view->hasFocus());
+    view->setCurrentIndex(view->model()->index(1, 0));
+
+    const ResultView::SelectionSnapshot snapshot = view->SnapshotSelection();
+    QVERIFY(snapshot.hadFocus);
+
+    view->Model()->SetEntries(ThreeEntries());
+    view->RestoreSelection(snapshot);
+    QVERIFY(view->hasFocus());
 }
 
 QTEST_MAIN(TestResultView)

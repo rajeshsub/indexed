@@ -5,7 +5,9 @@
 #include <QClipboard>
 #include <QContextMenuEvent>
 #include <QDrag>
+#include <QHash>
 #include <QHeaderView>
+#include <QItemSelectionModel>
 #include <QKeyEvent>
 #include <QList>
 #include <QUrl>
@@ -108,6 +110,58 @@ QStringList ResultView::SelectedFullPaths() const {
         paths.append(FullPathForRow(index.row()));
     }
     return paths;
+}
+
+ResultView::SelectionSnapshot ResultView::SnapshotSelection() const {
+    SelectionSnapshot snapshot;
+    snapshot.hadFocus = hasFocus();
+    if (selectionModel() == nullptr) {
+        return snapshot;
+    }
+    snapshot.selectedPaths = SelectedFullPaths();
+    const QModelIndex current = currentIndex();
+    if (current.isValid()) {
+        snapshot.currentPath = FullPathForRow(current.row());
+    }
+    return snapshot;
+}
+
+void ResultView::RestoreSelection(const SelectionSnapshot& snapshot) {
+    if (model_ == nullptr || selectionModel() == nullptr) {
+        return;
+    }
+    if (snapshot.selectedPaths.isEmpty() && snapshot.currentPath.isEmpty()) {
+        return;
+    }
+
+    // One pass over the fresh snapshot: a result set is at most a few
+    // thousand rows and this only runs on a live-monitoring refresh.
+    QHash<QString, int> rowForPath;
+    const int rows = model_->rowCount();
+    rowForPath.reserve(rows);
+    for (int row = 0; row < rows; ++row) {
+        rowForPath.insert(FullPathForRow(row), row);
+    }
+
+    bool first = true;
+    for (const QString& path : snapshot.selectedPaths) {
+        const auto it = rowForPath.constFind(path);
+        if (it == rowForPath.constEnd()) {
+            continue;
+        }
+        const auto flag = first ? QItemSelectionModel::ClearAndSelect : QItemSelectionModel::Select;
+        selectionModel()->select(model_->index(*it, 0), flag | QItemSelectionModel::Rows);
+        first = false;
+    }
+
+    const auto currentIt = rowForPath.constFind(snapshot.currentPath);
+    if (currentIt != rowForPath.constEnd()) {
+        selectionModel()->setCurrentIndex(model_->index(*currentIt, 0),
+                                          QItemSelectionModel::NoUpdate);
+    }
+    if (snapshot.hadFocus) {
+        setFocus(Qt::OtherFocusReason);
+    }
 }
 
 QMenu* ResultView::BuildContextMenu(QWidget* parent) {

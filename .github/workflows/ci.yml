@@ -258,8 +258,22 @@ jobs:
                   data = json.load(f)
               return {b["name"]: b for b in data["benchmarks"] if b.get("run_type") != "aggregate"}
 
+          # GitHub-hosted runners are not a fixed machine: the ubuntu-latest pool
+          # mixes CPU SKUs and the VM shares a host with noisy neighbours, so
+          # absolute Google Benchmark times swing run-to-run by far more than any
+          # real code change would. Two consecutive runs commonly differ by 50%+
+          # in either direction with identical code. This table is a coarse
+          # smoke signal only -- flag a delta only once it is large enough to
+          # stand clear of that noise floor. A genuine regression shows up as a
+          # sustained step in the github-action-benchmark trend chart below,
+          # across many data points; trust that, not a single pairwise delta.
+          NOISE_FLOOR_PCT = 50
+
           def render(title, history_path, results_path, history_name):
               print(f"## {title} -- delta vs previous run\n")
+              print("_Hosted-runner timings are noisy (commonly +/-50% run-to-run "
+                    "with identical code). Treat this as a smoke signal only; the "
+                    "trend chart below is the real regression check._\n")
               previous = load_previous(history_path, history_name)
               current = load_current(results_path)
               if previous is None:
@@ -281,7 +295,11 @@ jobs:
                       continue
                   prev_time = prev_bench["value"]
                   delta_pct = (cur_time - prev_time) / prev_time * 100 if prev_time else 0.0
-                  marker = " :warning:" if delta_pct > 10 else (" :white_check_mark:" if delta_pct < -10 else "")
+                  marker = ""
+                  if delta_pct > NOISE_FLOOR_PCT:
+                      marker = " :warning:"
+                  elif delta_pct < -NOISE_FLOOR_PCT:
+                      marker = " :white_check_mark:"
                   print(f"| {name} | {prev_time:.0f} {unit} | {cur_time:.0f} {unit} | {delta_pct:+.1f}%{marker} |")
               print()
 

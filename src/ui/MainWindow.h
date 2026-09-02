@@ -106,6 +106,10 @@ private:
     std::atomic<bool> localMonitorStop_{false};
     std::thread localMonitorThread_;
     QTimer* liveRefreshTimer_ = nullptr;
+    // Set by RefreshVisibleResults so the next ResultsReady preserves the
+    // user's selection/current row/focus across the model reset; cleared on
+    // every ResultsReady so a subsequent user search resets normally.
+    bool preserveSelectionOnNextResults_ = false;
 
     QProcess* helperProcess_ = nullptr;
     QFileSystemWatcher* helperWatcher_ = nullptr;

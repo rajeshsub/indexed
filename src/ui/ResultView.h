@@ -35,6 +35,19 @@ public:
     QString FullPathForRow(int row) const;
     QStringList SelectedFullPaths() const;
 
+    // Selected rows + the current row, keyed by full path so they survive a
+    // ResultModel::SetEntries (a full model reset that otherwise drops
+    // selection, current index, and keyboard focus). A live-monitoring
+    // refresh re-runs the query while the user may be mid-interaction with a
+    // row; RestoreSelection puts them back on the same file afterwards.
+    struct SelectionSnapshot {
+        QStringList selectedPaths;
+        QString currentPath;
+        bool hadFocus = false;
+    };
+    SelectionSnapshot SnapshotSelection() const;
+    void RestoreSelection(const SelectionSnapshot& snapshot);
+
     // Context menu per §19 + docs/adr/0013: Open, Open Containing Folder,
     // separator, Copy, Cut, Copy Full Path, Copy Filename. Open is disabled
     // when more than one row is selected. Caller owns the returned menu

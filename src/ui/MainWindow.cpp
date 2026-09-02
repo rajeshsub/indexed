@@ -211,11 +211,18 @@ void MainWindow::WireSearch() {
     });
     connect(coordinator_, &SearchCoordinator::ResultsReady, this,
             [this](std::vector<DisplayEntry> entries, bool capped) {
+                const bool preserve = preserveSelectionOnNextResults_;
+                preserveSelectionOnNextResults_ = false;
                 if (searchBox_->text().size() < 2) {
                     return;  // box was cleared while this search was in flight
                 }
                 const size_t count = entries.size();
+                const ResultView::SelectionSnapshot selection =
+                    preserve ? resultView_->SnapshotSelection() : ResultView::SelectionSnapshot{};
                 resultModel_->SetEntries(std::move(entries));
+                if (preserve) {
+                    resultView_->RestoreSelection(selection);
+                }
                 statusBar()->showMessage(QString::fromStdString(ResultCountText(count, capped)));
             });
 }
@@ -315,6 +322,12 @@ void MainWindow::RefreshVisibleResults() {
     // a delete, a trash) are reflected without the user retyping. A query
     // under 2 chars shows no results, so there is nothing to refresh.
     if (searchBox_->text().size() >= 2) {
+        // This re-query triggers a full ResultModel reset, which would drop
+        // the user's selection, current row, and keyboard focus while they
+        // may be mid-interaction with a result. Flag it so the ResultsReady
+        // handler restores those by path; a user-initiated search does not
+        // set this and resets normally.
+        preserveSelectionOnNextResults_ = true;
         coordinator_->SetQuery(searchBox_->text());
     }
 }
