@@ -1,10 +1,13 @@
 #include <gtest/gtest.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "indexer/IFileSystemScanner.h"
 #include "storage/Crc32.h"
 #include "storage/IndexPool.h"
 #include "storage/IndexSerializer.h"
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <string>
 
@@ -152,4 +155,104 @@ TEST(IndexSerializerTest, RejectsCrcCorruption) {
 TEST(IndexSerializerTest, MissingFileFailsCleanly) {
     IndexSerializer::LoadResult result = IndexSerializer::Load(TempFilePath("does_not_exist_xyz"));
     EXPECT_FALSE(result.success);
+}
+
+TEST(IndexSerializerTest, RejectsTrailingPayloadBytes) {
+    IndexPool pool;
+    pool.AddEntry(MakeEntry("a.txt", "/a.txt", 1, 1));
+
+    const std::string path = TempFilePath("trailing_bytes");
+    ASSERT_TRUE(IndexSerializer::Save(path, pool, 1, 0));
+
+    std::vector<char> bytes;
+    {
+        std::ifstream in(path, std::ios::binary | std::ios::ate);
+        ASSERT_TRUE(in.is_open());
+        std::streamoff size = in.tellg();
+        in.seekg(0, std::ios::beg);
+        bytes.resize(static_cast<size_t>(size));
+        ASSERT_TRUE(in.read(bytes.data(), size));
+    }
+
+    // Recompute the header's CRC over payload+garbage so the file still passes
+    // the CRC check; a correct loader must still reject it because the parsed
+    // fields don't account for every byte in the payload.
+    std::string_view payload(bytes.data() + kHeaderSize, bytes.size() - kHeaderSize);
+    std::string extended(payload);
+    extended.push_back('\xAB');
+    const uint32_t newCrc = Crc32(extended);
+
+    std::vector<char> rewritten(bytes.begin(), bytes.begin() + kHeaderSize);
+    // CRC is the last 4 bytes of the header (u32 magic + u16 version + u64
+    // timestamp + u64 entryCount + u32 crc32).
+    constexpr std::streamoff kCrcOffset =
+        kHeaderSize - static_cast<std::streamoff>(sizeof(uint32_t));
+    std::memcpy(rewritten.data() + kCrcOffset, &newCrc, sizeof(newCrc));
+    rewritten.insert(rewritten.end(), extended.begin(), extended.end());
+
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(out.is_open());
+        out.write(rewritten.data(), static_cast<std::streamsize>(rewritten.size()));
+    }
+
+    IndexSerializer::LoadResult result = IndexSerializer::Load(path);
+    EXPECT_FALSE(result.success);
+
+    std::remove(path.c_str());
+}
+
+TEST(IndexSerializerTest, SaveDoesNotClobberExistingFileOnFailure) {
+    const std::string dir = ::testing::TempDir() + "indexed_test_atomic_dir";
+    ::mkdir(dir.c_str(), 0755);
+    const std::string path = dir + "/index.idx";
+
+    IndexPool pool;
+    pool.AddEntry(MakeEntry("a.txt", "/a.txt", 1, 1));
+    ASSERT_TRUE(IndexSerializer::Save(path, pool, 1, 0));
+
+    std::string originalContent;
+    {
+        std::ifstream in(path, std::ios::binary);
+        ASSERT_TRUE(in.is_open());
+        originalContent.assign(std::istreambuf_iterator<char>(in),
+                               std::istreambuf_iterator<char>());
+    }
+
+    // Strip write permission on the directory so creating the temp file (the
+    // first step of a same-path atomic Save) fails, forcing Save to fail
+    // before it ever gets to renaming over the existing index.
+    ASSERT_EQ(::chmod(dir.c_str(), 0500), 0);
+
+    IndexPool pool2;
+    pool2.AddEntry(MakeEntry("b.txt", "/b.txt", 2, 2));
+    EXPECT_FALSE(IndexSerializer::Save(path, pool2, 2, 2));
+
+    ::chmod(dir.c_str(), 0755);
+
+    std::string afterContent;
+    {
+        std::ifstream in(path, std::ios::binary);
+        ASSERT_TRUE(in.is_open());
+        afterContent.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    EXPECT_EQ(afterContent, originalContent);
+
+    std::remove(path.c_str());
+    ::rmdir(dir.c_str());
+}
+
+TEST(IndexSerializerTest, SaveLeavesNoStrayTempFile) {
+    IndexPool pool;
+    pool.AddEntry(MakeEntry("a.txt", "/a.txt", 1, 1));
+
+    const std::string path = TempFilePath("no_stray_temp");
+    ASSERT_TRUE(IndexSerializer::Save(path, pool, 1, 0));
+
+    const std::string tempPath = path + ".tmp";
+    struct stat st{};
+    EXPECT_NE(stat(path.c_str(), &st), -1);
+    EXPECT_EQ(stat(tempPath.c_str(), &st), -1);
+
+    std::remove(path.c_str());
 }

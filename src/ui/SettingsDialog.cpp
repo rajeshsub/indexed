@@ -70,6 +70,9 @@ void SettingsDialog::BuildUi() {
 
     // --- Paths to index ---
     auto* pathsGroup = new QGroupBox(QStringLiteral("Paths to index"), this);
+    pathsGroup->setToolTip(
+        QStringLiteral("Symlinked files and directories are not indexed or searchable, "
+                       "even under a selected path."));
     auto* pathsLayout = new QVBoxLayout(pathsGroup);
 
     pathList_ = new QListWidget(pathsGroup);
