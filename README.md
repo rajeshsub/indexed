@@ -32,7 +32,15 @@ millions of files. It is a feature-for-feature Linux port of
 - **Portable mode** -- place an `indexed.conf` next to the executable and all data stays
   in that directory
 - **Persistent index** -- serialized to disk (CRC-32 validated) and loaded on startup;
-  only rebuilt when stale, corrupt, or missing
+  only rebuilt when stale, corrupt, or missing. This is a cached index kept current by
+  live monitoring and periodic rescans, not a transactional, always-exact snapshot of the
+  filesystem -- changes made while `indexed` isn't running are picked up on the next
+  startup's staleness check or reindex, not retroactively replayed (see
+  `docs/adr/0007-fanotify-vs-inotify-monitoring.md`)
+- **Symlinks are not indexed** -- both symlinked files and symlinked directories are
+  skipped during scanning and are not searchable. This is a deliberate policy applied
+  consistently, including to explicitly configured index roots (see
+  `docs/adr/0002-directory-walk-scanning-strategy.md`)
 - **Context menu** -- open file, open containing folder, copy full path, copy filename,
   cut (move), delete (to Trash), drag-and-drop out to file managers
 - **Smart exclusions** -- pseudo-filesystems, container storage, and Flatpak data are

@@ -1,7 +1,10 @@
 #include "storage/IndexSerializer.h"
 
+#include <unistd.h>
+
 #include "storage/Crc32.h"
 #include "storage/EntryMeta.h"
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <type_traits>
@@ -83,13 +86,40 @@ bool IndexSerializer::Save(const std::string& filepath, const IndexPool& pool,
     AppendValue(header, static_cast<uint64_t>(meta.size()));
     AppendValue(header, crc);
 
-    std::ofstream out(filepath, std::ios::binary | std::ios::trunc);
-    if (!out) {
+    // Write to a sibling temp file and fsync+rename it over filepath rather than
+    // truncating filepath in place: rename() is atomic on the same filesystem, so a
+    // crash or power loss mid-write leaves either the old index or the new one intact,
+    // never a truncated/partial file in filepath's place.
+    const std::string tempPath = filepath + ".tmp";
+    {
+        std::ofstream out(tempPath, std::ios::binary | std::ios::trunc);
+        if (!out) {
+            return false;
+        }
+        out.write(header.data(), static_cast<std::streamsize>(header.size()));
+        out.write(body.data(), static_cast<std::streamsize>(body.size()));
+        out.flush();
+        if (!out.good()) {
+            std::remove(tempPath.c_str());
+            return false;
+        }
+    }
+
+    FILE* file = std::fopen(tempPath.c_str(), "rb");
+    if (file == nullptr || fsync(fileno(file)) != 0) {
+        if (file != nullptr) {
+            std::fclose(file);
+        }
+        std::remove(tempPath.c_str());
         return false;
     }
-    out.write(header.data(), static_cast<std::streamsize>(header.size()));
-    out.write(body.data(), static_cast<std::streamsize>(body.size()));
-    return out.good();
+    std::fclose(file);
+
+    if (std::rename(tempPath.c_str(), filepath.c_str()) != 0) {
+        std::remove(tempPath.c_str());
+        return false;
+    }
+    return true;
 }
 
 IndexSerializer::LoadResult IndexSerializer::Load(const std::string& filepath) {
@@ -157,6 +187,10 @@ IndexSerializer::LoadResult IndexSerializer::Load(const std::string& filepath) {
 
     uint64_t lastMonitorStopNs = 0;
     if (!ReadValue(buffer, offset, lastMonitorStopNs)) {
+        return {};
+    }
+
+    if (offset != buffer.size()) {
         return {};
     }
 
