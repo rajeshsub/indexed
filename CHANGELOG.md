@@ -5,6 +5,39 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-18
+
+### Fixed
+- Selected result and keyboard focus no longer drop every few seconds under
+  a monitored, actively-changing folder: a live-monitoring refresh reset the
+  result list wholesale, losing selection/focus even when the selected file
+  was untouched. Selection now follows the row by path across the refresh.
+- Index persistence is now crash-safe: the on-disk index is written to a
+  temp file, fsynced, and renamed into place instead of being truncated in
+  place, so an interruption mid-write can no longer destroy the last good
+  index.
+- Fixed a heap-use-after-free: saving the index while a live-monitoring
+  mutation was landing on another thread could read the index pool's
+  backing storage mid-reallocation. Both save paths now hold the same lock
+  as every other pool access.
+- Benchmark delta table now actually shows a comparison instead of always
+  reporting "nothing to compare against" (a CI cache-key collision between
+  two unrelated jobs).
+
+### Changed
+- The serialized index format now rejects files with trailing bytes past
+  the declared payload, tightening the existing CRC-based validation.
+- Documented, in the README, two already-deliberate but previously implicit
+  policies: symlinks are never indexed, and the persisted index is a
+  monitored cache, not a transactional snapshot. Tombstone reclamation is
+  confirmed rebuild-only (no separate compaction pass) and recorded as a
+  permanent decision in `docs/adr/0007`.
+
+Full test suite green; clang-format and cppcheck clean; new tests cover
+persistence-failure paths, sustained mutation churn, and concurrent
+index reload against live monitoring (the last of which is what caught
+the use-after-free above).
+
 ## [0.3.0] - 2026-08-31
 
 ### Added
