@@ -2,6 +2,7 @@
 
 #include "storage/IndexSerializer.h"
 #include <atomic>
+#include <shared_mutex>
 #include <thread>
 #include <utility>
 
@@ -67,7 +68,15 @@ void Indexer::StartIndexing(bool force, const ScanOptions& options, const std::s
         cancelToken);
     store_.EndWrite();
     store_.SetBuildTimestamp(nowNs);
-    IndexSerializer::Save(idxFilePath, store_.GetPool(), nowNs, store_.GetLastMonitorStop());
+    // GetPool() returns a reference into the live store with no locking of
+    // its own (see IIndexStore::GetPool), and a concurrent live-monitoring
+    // mutation (ApplyAdd/ApplyRemove/...) on another thread can reallocate
+    // its backing vectors mid-serialize. Save only reads, so a shared lock
+    // is enough to block out concurrent exclusive mutators for its duration.
+    {
+        std::shared_lock lock(store_.GetSearchMutex());
+        IndexSerializer::Save(idxFilePath, store_.GetPool(), nowNs, store_.GetLastMonitorStop());
+    }
     ReportStatus(IndexerState::Idle, "Indexing complete", filesFound, options.rootPaths, 0);
 }
 
@@ -93,6 +102,10 @@ void Indexer::RemovePaths(const std::vector<std::string>& paths) {
 
 void Indexer::PersistIndex(const std::string& idxFilePath, uint64_t nowNs) {
     store_.SetBuildTimestamp(nowNs);
+    // Same GetPool()-without-locking hazard as StartIndexing's save (see the
+    // comment there): PersistIndex can run concurrently with live-monitoring
+    // mutations, so the read needs the same shared lock for its duration.
+    std::shared_lock lock(store_.GetSearchMutex());
     IndexSerializer::Save(idxFilePath, store_.GetPool(), nowNs, store_.GetLastMonitorStop());
 }
 
