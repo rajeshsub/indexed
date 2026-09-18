@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -58,14 +59,19 @@ std::string TempFilePath(const std::string& name) {
 
 // Backs a NiceMock<MockIndexStore> with a real IndexPool so tests can assert
 // on what actually ends up staged/saved, not just that a method was called.
-// BeginWrite/AddEntry/EndWrite/GetPool are delegated to `pool`; everything
-// else keeps its default gmock no-op unless a test overrides it.
-void WireRealBackingPool(NiceMock<MockIndexStore>& store, IndexPool& pool) {
+// BeginWrite/AddEntry/EndWrite/GetPool/GetSearchMutex are delegated to
+// `pool`/`mutex`; everything else keeps its default gmock no-op unless a
+// test overrides it. GetSearchMutex must be wired -- StartIndexing holds it
+// for the duration of IndexSerializer::Save (see Indexer.cpp), since Save
+// reads GetPool()'s backing vectors without its own locking.
+void WireRealBackingPool(NiceMock<MockIndexStore>& store, IndexPool& pool,
+                         std::shared_mutex& mutex) {
     ON_CALL(store, BeginWrite()).WillByDefault(Invoke([&pool]() { pool = IndexPool(); }));
     ON_CALL(store, AddEntry(_)).WillByDefault(Invoke([&pool](const FileEntry& entry) {
         pool.AddEntry(entry);
     }));
     ON_CALL(store, GetPool()).WillByDefault(ReturnRef(pool));
+    ON_CALL(store, GetSearchMutex()).WillByDefault(ReturnRef(mutex));
 }
 
 }  // namespace
@@ -74,7 +80,8 @@ TEST(Indexer, StartIndexingForceScansStreamsAndSaves) {
     NiceMock<MockFileSystemScanner> scanner;
     NiceMock<MockIndexStore> store;
     IndexPool backingPool;
-    WireRealBackingPool(store, backingPool);
+    std::shared_mutex backingMutex;
+    WireRealBackingPool(store, backingPool, backingMutex);
 
     const std::string idxPath = TempFilePath("force_scan");
     std::remove(idxPath.c_str());
@@ -158,7 +165,8 @@ TEST(Indexer, StartIndexingRescansWhenOnDiskIndexIsStale) {
     NiceMock<MockFileSystemScanner> scanner;
     NiceMock<MockIndexStore> store;
     IndexPool backingPool;
-    WireRealBackingPool(store, backingPool);
+    std::shared_mutex backingMutex;
+    WireRealBackingPool(store, backingPool, backingMutex);
 
     const std::string idxPath = TempFilePath("stale");
     IndexPool onDiskPool;
@@ -191,7 +199,8 @@ TEST(Indexer, StartIndexingScansWhenNoIndexFileExists) {
     NiceMock<MockFileSystemScanner> scanner;
     NiceMock<MockIndexStore> store;
     IndexPool backingPool;
-    WireRealBackingPool(store, backingPool);
+    std::shared_mutex backingMutex;
+    WireRealBackingPool(store, backingPool, backingMutex);
 
     const std::string idxPath = TempFilePath("missing");
     std::remove(idxPath.c_str());
@@ -250,7 +259,9 @@ TEST(Indexer, PersistIndexSavesCurrentPoolAndStampsBuildTimestamp) {
     NiceMock<MockIndexStore> store;
     IndexPool backingPool;
     backingPool.AddEntry(MakeEntry("kept.txt", "/mnt/usb/kept.txt"));
+    std::shared_mutex backingMutex;
     ON_CALL(store, GetPool()).WillByDefault(ReturnRef(backingPool));
+    ON_CALL(store, GetSearchMutex()).WillByDefault(ReturnRef(backingMutex));
     EXPECT_CALL(store, GetLastMonitorStop()).WillRepeatedly(Return(7ULL));
     EXPECT_CALL(store, SetBuildTimestamp(42'000'000'000ULL)).Times(1);
 
@@ -571,6 +582,9 @@ TEST(Indexer, ApplyChangeEventDuringConcurrentForceRescanBothCompleteWithoutCorr
     ON_CALL(mockStore, EndWrite()).WillByDefault(Invoke([&]() { realStore.EndWrite(); }));
     ON_CALL(mockStore, GetPool()).WillByDefault(Invoke([&]() -> const IndexPool& {
         return realStore.GetPool();
+    }));
+    ON_CALL(mockStore, GetSearchMutex()).WillByDefault(Invoke([&]() -> std::shared_mutex& {
+        return realStore.GetSearchMutex();
     }));
     ON_CALL(mockStore, SetBuildTimestamp(_)).WillByDefault(Invoke([&](uint64_t ts) {
         realStore.SetBuildTimestamp(ts);
