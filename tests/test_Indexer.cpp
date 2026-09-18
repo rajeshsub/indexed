@@ -5,6 +5,7 @@
 #include "mocks/MockFileSystemScanner.h"
 #include "mocks/MockIndexStore.h"
 #include "storage/IndexSerializer.h"
+#include "storage/IndexStore.h"
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -12,6 +13,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 using ::testing::_;
@@ -459,4 +461,165 @@ TEST(Indexer, StartLiveMonitoringAppliesEventsDeliveredByTheMonitor) {
 
     std::atomic<bool> stopToken{true};
     indexer.StartLiveMonitoring({"/mnt/a"}, stopToken);
+}
+
+TEST(Indexer, StartLiveMonitoringAppliesABurstOfEventsInOrderWithoutDroppingAny) {
+    NiceMock<MockFileSystemScanner> scanner;
+    NiceMock<MockIndexStore> store;
+    ON_CALL(scanner, Scan(_, _, _, _))
+        .WillByDefault(Invoke([](const ScanOptions& options, indexed::ScanCallback onEntry,
+                                 indexed::ProgressCallback, const std::atomic<bool>&) {
+            const std::string& path = options.rootPaths.front();
+            onEntry(MakeEntry(path, path));
+        }));
+
+    std::mutex callMutex;
+    std::vector<std::string> appliedOps;
+    ON_CALL(store, ApplyAdd(_)).WillByDefault(Invoke([&](const FileEntry& entry) {
+        std::lock_guard<std::mutex> lock(callMutex);
+        appliedOps.push_back("add:" + entry.path);
+    }));
+    ON_CALL(store, ApplyRemove(_)).WillByDefault(Invoke([&](std::string_view path) {
+        std::lock_guard<std::mutex> lock(callMutex);
+        appliedOps.push_back("remove:" + std::string(path));
+    }));
+    ON_CALL(store, ApplyRename(_, _))
+        .WillByDefault(Invoke([&](std::string_view oldPath, std::string_view newPath) {
+            std::lock_guard<std::mutex> lock(callMutex);
+            appliedOps.push_back("rename:" + std::string(oldPath) + "->" + std::string(newPath));
+        }));
+
+    int mutations = 0;
+    std::mutex mutationMutex;
+
+    // A burst: several distinct events delivered back-to-back by one monitor
+    // callback invocation, as a real fanotify/inotify backend could deliver
+    // after coalescing a flurry of filesystem activity (e.g. an rsync or a
+    // git checkout touching many files at once). Every event must still be
+    // applied, in delivery order, none dropped.
+    Indexer indexer(
+        scanner, store,
+        [](const std::string&) -> std::unique_ptr<IChangeMonitor> {
+            auto monitor = std::make_unique<NiceMock<MockChangeMonitor>>();
+            ON_CALL(*monitor, StartMonitoring(_, _, _))
+                .WillByDefault(Invoke([](const std::string&, indexed::ChangeCallback onChange,
+                                         const std::atomic<bool>&) {
+                    FileChangeEvent added1;
+                    added1.type = FileChangeType::Added;
+                    added1.path = "/mnt/a/one.txt";
+                    onChange(added1);
+
+                    FileChangeEvent added2;
+                    added2.type = FileChangeType::Added;
+                    added2.path = "/mnt/a/two.txt";
+                    onChange(added2);
+
+                    FileChangeEvent renamed;
+                    renamed.type = FileChangeType::Renamed;
+                    renamed.oldPath = "/mnt/a/one.txt";
+                    renamed.path = "/mnt/a/one-renamed.txt";
+                    onChange(renamed);
+
+                    FileChangeEvent removed;
+                    removed.type = FileChangeType::Removed;
+                    removed.path = "/mnt/a/two.txt";
+                    onChange(removed);
+                }));
+            return monitor;
+        },
+        /*statusCallback=*/nullptr,
+        [&mutations, &mutationMutex]() {
+            std::lock_guard<std::mutex> lock(mutationMutex);
+            ++mutations;
+        });
+
+    std::atomic<bool> stopToken{true};
+    indexer.StartLiveMonitoring({"/mnt/a"}, stopToken);
+
+    std::lock_guard<std::mutex> lock(callMutex);
+    ASSERT_EQ(appliedOps.size(), 4u);
+    EXPECT_EQ(appliedOps[0], "add:/mnt/a/one.txt");
+    EXPECT_EQ(appliedOps[1], "add:/mnt/a/two.txt");
+    EXPECT_EQ(appliedOps[2], "rename:/mnt/a/one.txt->/mnt/a/one-renamed.txt");
+    EXPECT_EQ(appliedOps[3], "remove:/mnt/a/two.txt");
+    EXPECT_EQ(mutations, 4);
+}
+
+TEST(Indexer, ApplyChangeEventDuringConcurrentForceRescanBothCompleteWithoutCorruption) {
+    // Index reload (a force rescan, e.g. triggered by SIGUSR1 or a
+    // stale-index rebuild) can run concurrently with live-monitoring
+    // mutations arriving on another thread, since StartIndexing and
+    // ApplyChangeEvent are invoked from different threads in the real
+    // FanotifyMonitor/InotifyWatcher-backed app. Both must complete without
+    // crashing or corrupting the backing store; the real IndexStore's
+    // shared_mutex is what's actually under test here (Indexer itself just
+    // forwards calls), so this wires a real store instead of a mock.
+    NiceMock<MockFileSystemScanner> scanner;
+    NiceMock<MockIndexStore> mockStore;
+    indexed::IndexStore realStore;
+
+    ON_CALL(mockStore, ApplyAdd(_)).WillByDefault(Invoke([&](const FileEntry& entry) {
+        realStore.ApplyAdd(entry);
+    }));
+    ON_CALL(mockStore, ApplyRemove(_)).WillByDefault(Invoke([&](std::string_view path) {
+        realStore.ApplyRemove(path);
+    }));
+    ON_CALL(mockStore, BeginWrite()).WillByDefault(Invoke([&]() { realStore.BeginWrite(); }));
+    ON_CALL(mockStore, AddEntry(_)).WillByDefault(Invoke([&](const FileEntry& entry) {
+        realStore.AddEntry(entry);
+    }));
+    ON_CALL(mockStore, EndWrite()).WillByDefault(Invoke([&]() { realStore.EndWrite(); }));
+    ON_CALL(mockStore, GetPool()).WillByDefault(Invoke([&]() -> const IndexPool& {
+        return realStore.GetPool();
+    }));
+    ON_CALL(mockStore, SetBuildTimestamp(_)).WillByDefault(Invoke([&](uint64_t ts) {
+        realStore.SetBuildTimestamp(ts);
+    }));
+    ON_CALL(mockStore, GetLastMonitorStop()).WillByDefault(Invoke([&]() {
+        return realStore.GetLastMonitorStop();
+    }));
+
+    ON_CALL(scanner, Scan(_, _, _, _))
+        .WillByDefault(Invoke([](const ScanOptions& options, indexed::ScanCallback onEntry,
+                                 indexed::ProgressCallback onProgress, const std::atomic<bool>&) {
+            for (const std::string& root : options.rootPaths) {
+                onEntry(MakeEntry(root, root));
+            }
+            onProgress(options.rootPaths.size(), "scan");
+        }));
+
+    Indexer indexer(scanner, mockStore, nullptr, nullptr);
+
+    const std::string idxPath = TempFilePath("concurrent_reload");
+    std::remove(idxPath.c_str());
+
+    ScanOptions options;
+    options.rootPaths = {"/home/user/rescan_root"};
+
+    std::atomic<bool> stop{false};
+    std::thread rescanThread([&]() {
+        for (int i = 0; i < 20 && !stop.load(); ++i) {
+            indexer.StartIndexing(/*force=*/true, options, idxPath, /*nowNs=*/1'000'000ULL + i,
+                                  /*staleThresholdSeconds=*/3600);
+        }
+    });
+
+    std::thread mutateThread([&]() {
+        for (int i = 0; i < 200; ++i) {
+            FileChangeEvent added;
+            added.type = FileChangeType::Added;
+            added.path = "/home/user/live" + std::to_string(i) + ".txt";
+            indexer.ApplyChangeEvent(added);
+        }
+    });
+
+    mutateThread.join();
+    stop.store(true);
+    rescanThread.join();
+
+    std::remove(idxPath.c_str());
+    // No crash/UB (caught by ASan/tsan in the pre-push build+ctest gate) is
+    // the primary assertion; this final check just confirms the store is
+    // still in a usable state afterward.
+    EXPECT_NO_THROW({ [[maybe_unused]] size_t count = realStore.GetPool().Count(); });
 }
