@@ -61,6 +61,39 @@ This mirrors how comparable Linux desktop indexers operate (Recoll's `recollinde
 more than a handful of control primitives between their indexer and their query-serving
 side.
 
+## Decision -- tombstone reclamation and staleness guarantee strength (grill-me, 2026-09-18)
+
+Two follow-up questions from an external persistence/monitoring review were resolved via
+`/grill-me` rather than left implicit or decided unilaterally by an agent:
+
+**Tombstone reclamation policy: rebuild-only, no standalone compaction pass.**
+`IndexPool::MarkDeleted` never reclaims space -- entries stay in `meta_`/the path pools
+with their `deleted` flag set, offsets never reused, so `IndexPool::Count()` only ever
+grows across `ApplyRemove`/`ApplyRename`/`RemoveEntriesUnderPath` calls. The only thing
+that clears accumulated tombstones is a full rebuild: `Indexer::StartIndexing`'s
+`BeginWrite`/`EndWrite` path (triggered by a stale on-disk index past
+`ReindexIntervalHours`, default 48h, or a forced/manual reindex) replaces the whole pool
+wholesale. **Decision:** keep this as the permanent policy -- no tombstone-ratio or
+entry-count trigger, no periodic compaction pass, and no user-facing tombstone-count
+surfacing. Rationale: growth between rebuilds is already bounded by the existing 48h
+staleness window (the same bound that mitigates the no-replay gap above), so unbounded
+churn between rebuilds isn't actually unbounded in practice; adding a second reclamation
+mechanism would be complexity with no material benefit over what the staleness check
+already provides for free. Covered by `IndexStore`'s
+`RepeatedCreateRenameDeleteChurnAccumulatesTombstonesNotLiveGrowth` and
+`RebuildViaBeginWriteEndWriteClearsAccumulatedTombstones` tests.
+
+**Staleness/consistency guarantee: kept as the permanent target, not a placeholder for a
+future stronger guarantee.** The "cache kept current by live monitoring and periodic
+rescans, not a transactional exact snapshot" statement (README, and the no-replay-gap
+consequence below) is the intended end-state guarantee for this project, not an interim
+compromise slated for strengthening. **Decision:** no lightweight validation pass and no
+additional "possibly stale" UI surfacing beyond the existing status-bar index-age readout
+are planned. If a future reviewer asks "is this guarantee strong enough," the answer
+already decided here is that it is, for this project's scope (§2, single-user, no
+query-serving daemon) -- re-open only via a fresh `/grill-me` pass, not a unilateral code
+change.
+
 ## Consequences
 
 - Index drift is possible only across a period when the GUI (and therefore the

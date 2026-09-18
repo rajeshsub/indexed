@@ -205,6 +205,68 @@ TEST(IndexStore, LastMonitorStopRoundTrips) {
     EXPECT_EQ(store.GetLastMonitorStop(), 123456789ULL);
 }
 
+TEST(IndexStore, RepeatedCreateRenameDeleteChurnAccumulatesTombstonesNotLiveGrowth) {
+    // Simulates sustained high-churn activity (repeated create/rename/delete
+    // of what a user experiences as "one file") without an intervening
+    // rebuild: ADR 0007's rebuild-only reclamation policy means Count() (the
+    // pool's total entry count, live + tombstoned) is expected to grow
+    // unboundedly here -- that's the documented trade-off, not a bug. Live,
+    // non-deleted entries must still stay at exactly one throughout.
+    IndexStore store;
+    store.BeginWrite();
+    store.EndWrite();
+
+    constexpr int kCycles = 50;
+    std::string currentPath = "/home/user/churn0.txt";
+    store.ApplyAdd(MakeEntry("churn0.txt", currentPath));
+
+    for (int i = 1; i <= kCycles; ++i) {
+        std::string nextPath = "/home/user/churn" + std::to_string(i) + ".txt";
+        store.ApplyRename(currentPath, nextPath);
+        currentPath = nextPath;
+    }
+    store.ApplyRemove(currentPath);
+
+    // Every prior generation (kCycles renames + the final remove) left a
+    // tombstone behind; only the very last entry was ever live, and it's
+    // deleted now too.
+    EXPECT_EQ(store.GetPool().Count(), static_cast<size_t>(kCycles) + 1);
+
+    size_t liveCount = 0;
+    for (size_t i = 0; i < store.GetPool().Count(); ++i) {
+        if (!store.GetPool().IsDeleted(i)) {
+            ++liveCount;
+        }
+    }
+    EXPECT_EQ(liveCount, 0u);
+    EXPECT_FALSE(store.GetPool().FindByPath(currentPath).has_value());
+}
+
+TEST(IndexStore, RebuildViaBeginWriteEndWriteClearsAccumulatedTombstones) {
+    // Proves the rebuild-only compaction policy (ADR 0007) actually works:
+    // a fresh BeginWrite/EndWrite generation (what StartIndexing's
+    // stale-triggered or forced rescan path does) replaces the whole pool,
+    // so tombstones from before the rebuild cannot survive it.
+    IndexStore store;
+    store.BeginWrite();
+    store.EndWrite();
+
+    store.ApplyAdd(MakeEntry("a.txt", "/home/user/a.txt"));
+    store.ApplyRename("/home/user/a.txt", "/home/user/b.txt");
+    store.ApplyRename("/home/user/b.txt", "/home/user/c.txt");
+    store.ApplyRemove("/home/user/c.txt");
+    ASSERT_GT(store.GetPool().Count(), 1u);
+
+    store.BeginWrite();
+    store.AddEntry(MakeEntry("fresh.txt", "/home/user/fresh.txt"));
+    store.EndWrite();
+
+    EXPECT_EQ(store.GetPool().Count(), 1u);
+    EXPECT_TRUE(store.GetPool().FindByPath("/home/user/fresh.txt").has_value());
+    EXPECT_FALSE(store.GetPool().FindByPath("/home/user/a.txt").has_value());
+    EXPECT_FALSE(store.GetPool().FindByPath("/home/user/c.txt").has_value());
+}
+
 TEST(IndexStore, SearchMutexSupportsSharedAndExclusiveLocking) {
     IndexStore store;
 
