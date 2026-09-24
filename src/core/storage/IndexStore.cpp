@@ -40,6 +40,11 @@ void IndexStore::EndWrite() {
     pool_ = std::move(stagingPool_);
 }
 
+void IndexStore::AbortWrite() {
+    std::unique_lock lock(mutex_);
+    stagingPool_ = IndexPool();
+}
+
 void IndexStore::ApplyAdd(const FileEntry& entry) {
     std::unique_lock lock(mutex_);
     pool_.AddEntry(entry);
@@ -104,6 +109,10 @@ uint64_t IndexStore::GetIndexAgeSeconds(uint64_t nowNs) const {
         return 0;
     }
     return (nowNs - buildTimestampNs_) / 1'000'000'000ULL;
+}
+
+uint64_t IndexStore::GetBuildTimestamp() const {
+    return buildTimestampNs_;
 }
 
 void IndexStore::SetLastMonitorStop(uint64_t nsSinceEpoch) {

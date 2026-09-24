@@ -15,10 +15,10 @@
 namespace indexed {
 
 // Owns the search-as-you-type pipeline (indexed-plan.md §19): 150 ms
-// debounce, minimum-2-characters gate, one background search thread at a
-// time (starting a new search cancels the previous via its cancelToken),
-// results posted back to the owning (GUI) thread as a ready-to-display
-// DisplayEntry snapshot.
+// debounce, minimum-2-characters gate, one current background search
+// (starting a new search cancels the previous via its cancelToken without
+// waiting for it; docs/adr/0014), results posted back to the owning (GUI)
+// thread as a ready-to-display DisplayEntry snapshot.
 //
 // Depends on ISearchEngine + IndexStore only; the engine is injected so
 // tests drive the pipeline with a stub engine and no real index.
@@ -52,6 +52,12 @@ signals:
 private:
     void StartSearch();
     void CancelRunningSearch();
+    void ReapFinishedWorkers();
+
+    struct SearchWorker {
+        std::thread thread;
+        std::shared_ptr<std::atomic<bool>> done;
+    };
 
     ISearchEngine& engine_;
     IndexStore& store_;
@@ -59,7 +65,8 @@ private:
     QString pendingQuery_;
     SearchOptions options_;
 
-    std::thread worker_;
+    // The current search plus any superseded ones still winding down.
+    std::vector<SearchWorker> workers_;
     std::shared_ptr<std::atomic<bool>> cancelToken_;
     std::atomic<bool> searching_{false};
 };

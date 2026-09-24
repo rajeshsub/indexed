@@ -339,3 +339,41 @@ TEST(InotifyWatcher, StopTokenCausesPromptReturn) {
         monitorThread.join();
     }
 }
+
+// Stopping monitoring must not wait for the initial whole-tree watch walk
+// (ADR 0014): with the stop flag already set, the walk ends early instead
+// of visiting every directory.
+TEST(InotifyWatcher, InitialWalkStopsEarlyOnceStopIsRequested) {
+    TempDir dir;
+    ASSERT_FALSE(dir.Path().empty());
+    for (int i = 0; i < 300; ++i) {
+        fs::create_directories(dir.Path() + "/d" + std::to_string(i) + "/sub");
+    }
+
+    std::atomic<bool> stop{true};
+    InotifyWatcher watcher;
+    watcher.StartMonitoring(dir.Path(), [](const FileChangeEvent&) {}, stop);
+
+    EXPECT_LE(watcher.InitialWatchCount(), 1u);
+}
+
+TEST(InotifyWatcher, InitialWalkWatchesEveryDirectoryWhenNotStopped) {
+    TempDir dir;
+    ASSERT_FALSE(dir.Path().empty());
+    for (int i = 0; i < 20; ++i) {
+        fs::create_directories(dir.Path() + "/d" + std::to_string(i) + "/sub");
+    }
+
+    std::atomic<bool> stop{false};
+    InotifyWatcher watcher;
+    std::thread monitor(
+        [&]() { watcher.StartMonitoring(dir.Path(), [](const FileChangeEvent&) {}, stop); });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (watcher.InitialWatchCount() == 0 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    stop.store(true);
+    monitor.join();
+
+    EXPECT_EQ(watcher.InitialWatchCount(), 41u);  // root + 20 dirs + 20 subdirs
+}

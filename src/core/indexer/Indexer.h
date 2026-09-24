@@ -3,10 +3,12 @@
 #include "indexer/IChangeMonitor.h"
 #include "indexer/IFileSystemScanner.h"
 #include "storage/IIndexStore.h"
+#include "storage/IndexSerializer.h"
 #include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -44,6 +46,19 @@ using MutationCallback = std::function<void()>;
 using ChangeMonitorFactory =
     std::function<std::unique_ptr<IChangeMonitor>(const std::string& root)>;
 
+// How Indexer reads and writes the on-disk index. Null members mean
+// IndexSerializer::Load / IndexSerializer::Save (the unprivileged GUI; a
+// failed save there is dropped -- the index is a rebuildable cache and the
+// next rebuild rewrites it). The root helper supplies both: its access to the
+// user's cache dir must go through the hardened Elevation primitives
+// (docs/adr/0008), and it logs its own failures.
+struct IndexFileIo {
+    // Receives the complete file image (IndexSerializer::Serialize); returns
+    // false if it could not be written.
+    std::function<bool(const std::string& idxFilePath, const std::vector<char>& bytes)> save;
+    std::function<IndexSerializer::LoadResult(const std::string& idxFilePath)> load;
+};
+
 // Orchestrates scanning, storage, and (M5) live monitoring, ported from
 // winindex's Indexer (indexed-plan.md §7.7). Dependency-injected per §6:
 // depends only on the IFileSystemScanner/IIndexStore/IChangeMonitor
@@ -53,7 +68,8 @@ using ChangeMonitorFactory =
 class Indexer {
 public:
     Indexer(IFileSystemScanner& scanner, IIndexStore& store, ChangeMonitorFactory monitorFactory,
-            StatusCallback statusCallback = nullptr, MutationCallback mutationCallback = nullptr);
+            StatusCallback statusCallback = nullptr, MutationCallback mutationCallback = nullptr,
+            IndexFileIo indexFileIo = {});
 
     // If !force and a valid, non-stale (age <= staleThresholdSeconds) index
     // exists at idxFilePath, loads it into the store (LoadingIndex -> Idle).
@@ -63,15 +79,23 @@ public:
     // idxFilePath (Scanning -> Idle). staleThresholdSeconds stands in for
     // Settings' ReindexIntervalHours (a sibling track not yet available to
     // M3, indexed-plan.md §7.7) as an explicit parameter instead.
-    void StartIndexing(bool force, const ScanOptions& options, const std::string& idxFilePath,
-                       uint64_t nowNs, uint64_t staleThresholdSeconds);
+    //
+    // `cancelToken`, when given, is passed through to the scanner; a scan
+    // cancelled through it leaves the live index and the file on disk as
+    // they were (nothing is swapped in or saved). Returns false only then.
+    bool StartIndexing(bool force, const ScanOptions& options, const std::string& idxFilePath,
+                       uint64_t nowNs, uint64_t staleThresholdSeconds,
+                       const std::atomic<bool>* cancelToken = nullptr);
 
     // Incremental add: scans just `paths` and adds each discovered entry via
     // IIndexStore::ApplyAdd (not a full rebuild). excludedPaths is honored
     // exactly as in a full scan -- an added root must not drag its excluded
     // subfolders into the index.
-    void IndexPaths(const std::vector<std::string>& paths,
-                    const std::vector<std::string>& excludedPaths = {});
+    // A scan cancelled through `cancelToken` stops early, leaving whatever it
+    // had already added in the store; returns false only then.
+    bool IndexPaths(const std::vector<std::string>& paths,
+                    const std::vector<std::string>& excludedPaths = {},
+                    const std::atomic<bool>* cancelToken = nullptr);
 
     // Incremental remove: marks every entry under each path deleted via
     // IIndexStore::RemoveEntriesUnderPath.
@@ -85,6 +109,14 @@ public:
     // ensure no concurrent writer is mutating the store (stop live
     // monitoring first).
     void PersistIndex(const std::string& idxFilePath, uint64_t nowNs);
+
+    // Saves the store's current pool to idxFilePath keeping its existing
+    // build timestamp, so live-monitoring changes reach the file without
+    // making the index look freshly built: the index age is what triggers
+    // the periodic full rebuild that clears tombstones (docs/adr/0007).
+    // Safe to call while live monitoring is mutating the store.
+    // Returns false if the save failed, so the caller can retry.
+    bool PersistLiveChanges(const std::string& idxFilePath);
 
     // Obtains one IChangeMonitor per root via the injected factory and starts
     // each on its own background thread; blocks (joining those threads)
@@ -106,12 +138,16 @@ private:
     void ReportStatus(IndexerState state, std::string message, uint64_t filesIndexed,
                       std::vector<std::string> locations, uint64_t indexAgeSeconds);
     void NotifyMutation();
+    // Saves with the given build timestamp, or the store's current one when
+    // none is given.
+    bool SaveIndex(const std::string& idxFilePath, std::optional<uint64_t> buildTimestampNs);
 
     IFileSystemScanner& scanner_;
     IIndexStore& store_;
     ChangeMonitorFactory monitorFactory_;
     StatusCallback statusCallback_;
     MutationCallback mutationCallback_;
+    IndexFileIo indexFileIo_;
 };
 
 }  // namespace indexed

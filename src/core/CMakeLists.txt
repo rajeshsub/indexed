@@ -12,6 +12,12 @@ add_library(indexed_core STATIC
     indexer/Indexer.cpp
     indexer/StatusFile.h
     indexer/StatusFile.cpp
+    indexer/SaveThrottle.h
+    indexer/SaveThrottle.cpp
+    indexer/IndexService.h
+    indexer/IndexService.cpp
+    settings/RootsDiff.h
+    settings/RootsDiff.cpp
     indexer/WalkScanner.h
     indexer/WalkScanner.cpp
     storage/EntryMeta.h

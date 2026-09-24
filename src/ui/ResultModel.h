@@ -3,6 +3,8 @@
 #include <QAbstractTableModel>
 
 #include "ui/DisplayEntry.h"
+#include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace indexed {
@@ -55,8 +57,18 @@ public:
     // ResultView/MainWindow action handling (open/reveal/copy/etc.).
     const DisplayEntry& EntryAt(int row) const;
 
+    // Full path of the file shown at `row` (parentDir + "/" + name).
+    std::string FullPath(int row) const;
+
+    // Rows whose file is being moved to Trash or deleted in the background
+    // (docs/adr/0014) are shown greyed out until the operation finishes.
+    // Survives SetEntries, so a refresh mid-operation keeps them marked.
+    void SetPendingPaths(std::unordered_set<std::string> paths);
+    bool IsPending(int row) const;
+
 private:
     std::vector<DisplayEntry> entries_;
+    std::unordered_set<std::string> pendingPaths_;
 };
 
 }  // namespace indexed

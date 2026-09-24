@@ -33,6 +33,7 @@ public:
     void BeginWrite() override;
     void AddEntry(const FileEntry& entry) override;
     void EndWrite() override;
+    void AbortWrite() override;
 
     void ApplyAdd(const FileEntry& entry) override;
     void ApplyRemove(std::string_view path) override;
@@ -53,6 +54,7 @@ public:
     // inside GetIndexAgeSeconds) to keep this deterministically unit-testable.
     void SetBuildTimestamp(uint64_t nsSinceEpoch) override;
     uint64_t GetIndexAgeSeconds(uint64_t nowNs) const override;
+    uint64_t GetBuildTimestamp() const override;
 
     void SetLastMonitorStop(uint64_t nsSinceEpoch) override;
     uint64_t GetLastMonitorStop() const override;

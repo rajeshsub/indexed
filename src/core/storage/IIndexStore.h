@@ -20,6 +20,9 @@ public:
     virtual void BeginWrite() = 0;
     virtual void AddEntry(const FileEntry& entry) = 0;
     virtual void EndWrite() = 0;
+    // Discards a staged pool that will never be swapped in (a cancelled
+    // scan), freeing its memory now rather than at the next BeginWrite.
+    virtual void AbortWrite() = 0;
 
     virtual void ApplyAdd(const FileEntry& entry) = 0;
     virtual void ApplyRemove(std::string_view path) = 0;
@@ -39,6 +42,7 @@ public:
 
     virtual void SetBuildTimestamp(uint64_t nsSinceEpoch) = 0;
     virtual uint64_t GetIndexAgeSeconds(uint64_t nowNs) const = 0;
+    virtual uint64_t GetBuildTimestamp() const = 0;
 
     virtual void SetLastMonitorStop(uint64_t nsSinceEpoch) = 0;
     virtual uint64_t GetLastMonitorStop() const = 0;

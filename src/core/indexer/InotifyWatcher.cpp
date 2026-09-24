@@ -59,6 +59,8 @@ public:
         return it != wdToPath_.end() ? it->second : std::string();
     }
 
+    size_t Size() const { return wdToPath_.size(); }
+
     bool WdFor(const std::string& path, int& outWd) const {
         auto it = pathToWd_.find(path);
         if (it == pathToWd_.end()) {
@@ -108,7 +110,7 @@ bool AddWatch(int fd, const std::string& dir, WatchTable& watches,
 // inode, not path) just updates its mask and returns the existing wd, which
 // self-heals this table's path entry to the new location.
 void AddWatchesRecursive(int fd, const std::string& root, WatchTable& watches,
-                         std::atomic<bool>& limitExceeded) {
+                         std::atomic<bool>& limitExceeded, const std::atomic<bool>& stopToken) {
     AddWatch(fd, root, watches, limitExceeded);
 
     std::error_code walkEc;
@@ -116,6 +118,9 @@ void AddWatchesRecursive(int fd, const std::string& root, WatchTable& watches,
                                         walkEc);
     fs::recursive_directory_iterator end;
     for (; !walkEc && it != end; it.increment(walkEc)) {
+        if (stopToken.load(std::memory_order_relaxed)) {
+            return;  // monitoring is being stopped; don't finish a whole-tree walk
+        }
         const fs::directory_entry& entry = *it;
         std::error_code symEc;
         if (entry.is_symlink(symEc) || symEc) {
@@ -142,13 +147,17 @@ void AddWatchesRecursive(int fd, const std::string& root, WatchTable& watches,
 // harmless: the consumer (Indexer::ApplyChangeEvent) re-stats and
 // ApplyAdds, which is idempotent.
 void WatchAndEmitNewSubtree(int fd, const std::string& dir, WatchTable& watches,
-                            std::atomic<bool>& limitExceeded, const ChangeCallback& onChange) {
-    AddWatchesRecursive(fd, dir, watches, limitExceeded);
+                            std::atomic<bool>& limitExceeded, const ChangeCallback& onChange,
+                            const std::atomic<bool>& stopToken) {
+    AddWatchesRecursive(fd, dir, watches, limitExceeded, stopToken);
 
     std::error_code walkEc;
     fs::recursive_directory_iterator it(dir, fs::directory_options::skip_permission_denied, walkEc);
     fs::recursive_directory_iterator end;
     for (; !walkEc && it != end; it.increment(walkEc)) {
+        if (stopToken.load(std::memory_order_relaxed)) {
+            return;  // monitoring is being stopped
+        }
         const fs::directory_entry& entry = *it;
         std::error_code symEc;
         if (entry.is_symlink(symEc) || symEc) {
@@ -186,7 +195,8 @@ void InotifyWatcher::StartMonitoring(const std::string& root, ChangeCallback onC
     }
 
     WatchTable watches;
-    AddWatchesRecursive(fd, root, watches, watchLimitExceeded_);
+    AddWatchesRecursive(fd, root, watches, watchLimitExceeded_, stopToken);
+    initialWatchCount_.store(watches.Size());
 
     std::vector<char> buffer(kEventBufferSize);
 
@@ -228,7 +238,8 @@ void InotifyWatcher::StartMonitoring(const std::string& root, ChangeCallback onC
                 if ((event->mask & IN_CREATE) != 0) {
                     onChange(FileChangeEvent{FileChangeType::Added, path, std::string()});
                     if (isDir) {
-                        WatchAndEmitNewSubtree(fd, path, watches, watchLimitExceeded_, onChange);
+                        WatchAndEmitNewSubtree(fd, path, watches, watchLimitExceeded_, onChange,
+                                               stopToken);
                     }
                 } else if ((event->mask & IN_DELETE) != 0) {
                     // If `path` was itself a watched directory, its own
@@ -256,7 +267,8 @@ void InotifyWatcher::StartMonitoring(const std::string& root, ChangeCallback onC
                         // an in-tree rename this re-emits entries the moved
                         // subtree's surviving watches will also report, which
                         // is idempotent downstream.
-                        WatchAndEmitNewSubtree(fd, path, watches, watchLimitExceeded_, onChange);
+                        WatchAndEmitNewSubtree(fd, path, watches, watchLimitExceeded_, onChange,
+                                               stopToken);
                     }
                 } else if ((event->mask & (IN_MODIFY | IN_CLOSE_WRITE)) != 0) {
                     onChange(FileChangeEvent{FileChangeType::Modified, path, std::string()});
@@ -287,6 +299,10 @@ void InotifyWatcher::StartMonitoring(const std::string& root, ChangeCallback onC
 
 bool InotifyWatcher::WatchLimitExceeded() const {
     return watchLimitExceeded_.load(std::memory_order_relaxed);
+}
+
+size_t InotifyWatcher::InitialWatchCount() const {
+    return initialWatchCount_.load();
 }
 
 }  // namespace indexed

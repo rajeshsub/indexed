@@ -5,7 +5,8 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDBusConnection>
-#include <QDBusInterface>
+#include <QDBusMessage>
+#include <QDBusPendingCallWatcher>
 #include <QDesktopServices>
 #include <QFile>
 #include <QFileInfo>
@@ -16,9 +17,8 @@
 #include <QVBoxLayout>
 
 #include "Version.h"
-#include "indexer/InotifyWatcher.h"
 #include "indexer/StatusFile.h"
-#include "storage/IndexSerializer.h"
+#include "settings/PathUtils.h"
 #include "ui/DisplayEntry.h"
 #include "ui/SettingsDialog.h"
 #include "ui/StatusText.h"
@@ -43,12 +43,16 @@ uint64_t NowNs() {
 }  // namespace
 
 MainWindow::MainWindow(Settings& settings, IndexStore& store, ISearchEngine& engine,
-                       IFileSystemScanner& scanner, std::string idxFilePath, std::string logPath,
-                       QWidget* parent)
+                       IFileSystemScanner& scanner, ChangeMonitorFactory monitorFactory,
+                       FileOperationRunner fileOperationRunner, QStringList helperCommand,
+                       std::string idxFilePath, std::string logPath, QWidget* parent)
     : QMainWindow(parent),
       settings_(settings),
       store_(store),
       scanner_(scanner),
+      monitorFactory_(std::move(monitorFactory)),
+      fileOperationRunner_(std::move(fileOperationRunner)),
+      helperCommand_(std::move(helperCommand)),
       idxFilePath_(std::move(idxFilePath)),
       logPath_(std::move(logPath)),
       statusFilePath_(
@@ -67,18 +71,31 @@ MainWindow::MainWindow(Settings& settings, IndexStore& store, ISearchEngine& eng
     liveRefreshTimer_->setInterval(400);
     connect(liveRefreshTimer_, &QTimer::timeout, this, &MainWindow::RefreshVisibleResults);
 
-    indexer_ = std::make_unique<Indexer>(
-        scanner_, store_,
-        [](const std::string&) {
-            return std::unique_ptr<IChangeMonitor>(std::make_unique<InotifyWatcher>());
-        },
-        /*statusCallback=*/nullptr,
-        // Called on a monitor thread: hop to the GUI thread and (re)start
-        // the coalescing timer rather than re-querying inline.
-        [this]() {
-            QMetaObject::invokeMethod(
-                this, [this]() { liveRefreshTimer_->start(); }, Qt::QueuedConnection);
-        });
+    // Every piece of index work runs on IndexService's threads; its
+    // callbacks hop back here before touching any widget (docs/adr/0014).
+    IndexServiceCallbacks callbacks;
+    callbacks.onStatus = [this](const IndexerStatus& status) {
+        QMetaObject::invokeMethod(
+            this, [this, status]() { OnIndexStatus(status); }, Qt::QueuedConnection);
+    };
+    callbacks.onBusyChanged = [this](bool busy) {
+        QMetaObject::invokeMethod(
+            this, [this, busy]() { SetIndexBusy(busy); }, Qt::QueuedConnection);
+    };
+    callbacks.onIndexChanged = [this](const IndexChange& change) {
+        QMetaObject::invokeMethod(
+            this, [this, change]() { OnIndexChanged(change); }, Qt::QueuedConnection);
+    };
+    callbacks.onLiveChange = [this]() {
+        QMetaObject::invokeMethod(
+            this, [this]() { liveRefreshTimer_->start(); }, Qt::QueuedConnection);
+    };
+    callbacks.onFileOperationsFinished = [this](const FileOperationReport& report) {
+        QMetaObject::invokeMethod(
+            this, [this, report]() { OnFileOperationsFinished(report); }, Qt::QueuedConnection);
+    };
+    service_ = std::make_unique<IndexService>(scanner_, store_, monitorFactory_, idxFilePath_,
+                                              fileOperationRunner_, std::move(callbacks), NowNs);
 
     auto* central = new QWidget(this);
     auto* layout = new QVBoxLayout(central);
@@ -103,6 +120,7 @@ MainWindow::MainWindow(Settings& settings, IndexStore& store, ISearchEngine& eng
     // showMessage() (unlike the result count, indexing progress, and
     // hotplug notices, which all share that transient slot).
     indexStatusLabel_ = new QLabel(tr("No index yet."), this);
+    indexStatusLabel_->setObjectName("indexStatusLabel");
     statusBar()->addPermanentWidget(indexStatusLabel_);
     searchOptionsLabel_ = new QLabel(this);
     statusBar()->addPermanentWidget(searchOptionsLabel_);
@@ -117,23 +135,44 @@ MainWindow::MainWindow(Settings& settings, IndexStore& store, ISearchEngine& eng
     WireSearch();
     WireResultActions();
 
+    // §19: nothing to search until an index exists; the first completed
+    // load or scan enables it (SetIndexBusy / OnIndexChanged).
+    SetSearchUiEnabled(false);
     searchBox_->setFocus();
     StartHotplugWatcher();
 }
 
+std::optional<std::string> MainWindow::RunFileOperation(const FileOperation& operation) {
+    if (operation.type == FileOperation::Type::MoveToTrash) {
+        if (QFile(QString::fromStdString(operation.path)).moveToTrash()) {
+            return std::nullopt;
+        }
+        return std::string("could not move to Trash");
+    }
+    std::error_code ec;
+    if (std::filesystem::remove(operation.path, ec)) {
+        return std::nullopt;
+    }
+    return ec ? ec.message() : std::string("no such file");
+}
+
 MainWindow::~MainWindow() {
+    // First, so no service callback can be posted to a half-destroyed
+    // window. Cancels a running scan; lets a file operation finish.
+    service_->Shutdown();
     StopHotplugWatcher();
-    StopLocalMonitoring();
+    if (helperProcess_ != nullptr) {
+        // Stopping (or destroying) the helper on exit must not call back into
+        // this half-destroyed window.
+        disconnect(helperProcess_, nullptr, this, nullptr);
+    }
     if (elevated_ && helperProcess_ && helperProcess_->state() == QProcess::Running) {
         SendSignalToHelper(SIGTERM);
         helperProcess_->waitForFinished(3000);
     }
-    JoinIndexThread();
-}
-
-void MainWindow::JoinIndexThread() {
-    if (indexThread_.joinable()) {
-        indexThread_.join();
+    {
+        std::lock_guard<std::mutex> lock(liveness_->mutex);
+        liveness_->alive = false;
     }
 }
 
@@ -168,18 +207,13 @@ void MainWindow::BuildMenus() {
 
     QMenu* indexMenu = menuBar()->addMenu(tr("&Index"));
     QAction* rebuild = indexMenu->addAction(tr("Rebuild Index Now"));
-    connect(rebuild, &QAction::triggered, this, [this]() {
-        if (elevated_) {
-            SendSignalToHelper(SIGUSR1);  // §9.3: reindex-now request
-        } else {
-            StartIndexing(/*force=*/true);
-        }
-    });
+    connect(rebuild, &QAction::triggered, this, &MainWindow::RebuildIndex);
     indexMenu->addSeparator();
     QAction* settingsAction = indexMenu->addAction(tr("Settings…"));
     connect(settingsAction, &QAction::triggered, this, &MainWindow::ShowSettingsDialog);
     indexMenu->addSeparator();
     elevateAction_ = indexMenu->addAction(tr("Elevate for Full-System Access…"));
+    elevateAction_->setObjectName("elevateAction");
     connect(elevateAction_, &QAction::triggered, this, &MainWindow::ElevateForFullAccess);
 
     QMenu* helpMenu = menuBar()->addMenu(tr("&Help"));
@@ -239,34 +273,64 @@ void MainWindow::WireResultActions() {
 }
 
 void MainWindow::OpenPath(const QString& path) {
-    if (!QFileInfo::exists(path)) {
-        const auto answer = QMessageBox::question(
-            this, tr("indexed"),
-            tr("The file no longer exists. It may have been moved or deleted.\n"
-               "Rebuild the index now?"));
-        if (answer == QMessageBox::Yes) {
-            StartIndexing(/*force=*/true);
+    // The existence check can hang on a dead network mount, so it runs off
+    // the UI thread (docs/adr/0014).
+    // Detached, so a stat hung on a dead mount can't hold up closing the
+    // app either; the result is posted only while the window still exists.
+    std::thread([this, path, liveness = liveness_]() {
+        const bool exists = QFileInfo::exists(path);
+        std::lock_guard<std::mutex> lock(liveness->mutex);
+        if (liveness->alive) {
+            QMetaObject::invokeMethod(
+                this, [this, path, exists]() { OnOpenPathChecked(path, exists); },
+                Qt::QueuedConnection);
         }
+    }).detach();
+}
+
+void MainWindow::OnOpenPathChecked(const QString& path, bool exists) {
+    if (exists) {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
         return;
     }
-    QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    auto* box = new QMessageBox(QMessageBox::Question, tr("indexed"),
+                                tr("The file no longer exists. It may have been moved or "
+                                   "deleted.\nRebuild the index now?"),
+                                QMessageBox::Yes | QMessageBox::No, this);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    connect(box, &QMessageBox::finished, this, [this, box]() {
+        if (box->clickedButton() == box->button(QMessageBox::Yes)) {
+            RebuildIndex();
+        }
+    });
+    box->open();
 }
 
 void MainWindow::RevealPath(const QString& path) {
-    // FileManager1 D-Bus reveal, falling back to opening the parent dir via
-    // xdg-open semantics whenever the call fails (no such interface, no
-    // session bus -- indexed-plan.md §17 risk 9).
-    QDBusInterface fileManager("org.freedesktop.FileManager1", "/org/freedesktop/FileManager1",
-                               "org.freedesktop.FileManager1");
-    bool ok = false;
-    if (fileManager.isValid()) {
-        const QDBusMessage reply = fileManager.call(
-            "ShowItems", QStringList{QUrl::fromLocalFile(path).toString()}, QString());
-        ok = reply.type() != QDBusMessage::ErrorMessage;
-    }
-    if (!ok) {
+    // FileManager1 D-Bus reveal, asynchronously: a hung or missing file
+    // manager must never stall the UI (docs/adr/0014). Falls back to opening
+    // the parent directory whenever the call fails (indexed-plan.md §17
+    // risk 9).
+    const auto fallback = [path]() {
         QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
+    };
+    QDBusConnection bus = QDBusConnection::sessionBus();
+    if (!bus.isConnected()) {
+        fallback();
+        return;
     }
+    QDBusMessage call = QDBusMessage::createMethodCall("org.freedesktop.FileManager1",
+                                                       "/org/freedesktop/FileManager1",
+                                                       "org.freedesktop.FileManager1", "ShowItems");
+    call << QStringList{QUrl::fromLocalFile(path).toString()} << QString();
+    auto* watcher = new QDBusPendingCallWatcher(bus.asyncCall(call, /*timeout=*/5000), this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this,
+            [fallback](QDBusPendingCallWatcher* finished) {
+                if (finished->isError()) {
+                    fallback();
+                }
+                finished->deleteLater();
+            });
 }
 
 void MainWindow::DeletePermanently(const QStringList& paths) {
@@ -276,45 +340,66 @@ void MainWindow::DeletePermanently(const QStringList& paths) {
             : tr("Permanently delete these %1 files? This cannot be undone.\n\n%2")
                   .arg(paths.size())
                   .arg(paths.join('\n'));
-    const auto answer = QMessageBox::warning(this, tr("indexed"), question,
-                                             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-    if (answer != QMessageBox::Yes) {
-        return;
-    }
-    QStringList failed;
-    for (const QString& path : paths) {
-        std::error_code ec;
-        if (std::filesystem::remove(path.toStdString(), ec)) {
-            store_.ApplyRemove(path.toStdString());
-        } else {
-            failed.append(ec ? tr("%1 (%2)").arg(path, QString::fromStdString(ec.message()))
-                             : path);
+    auto* box = new QMessageBox(QMessageBox::Warning, tr("indexed"), question,
+                                QMessageBox::Yes | QMessageBox::No, this);
+    box->setDefaultButton(QMessageBox::No);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    connect(box, &QMessageBox::finished, this, [this, box, paths]() {
+        if (box->clickedButton() == box->button(QMessageBox::Yes)) {
+            RunFileOperations(FileOperation::Type::DeletePermanently, paths, tr("delete"));
         }
-    }
-    RefreshVisibleResults();
-    ReportDeletionFailures(tr("delete"), failed);
+    });
+    box->open();
 }
 
 void MainWindow::TrashPaths(const QStringList& paths) {
-    QStringList failed;
+    RunFileOperations(FileOperation::Type::MoveToTrash, paths, tr("move to Trash"));
+}
+
+void MainWindow::RunFileOperations(FileOperation::Type type, const QStringList& paths,
+                                   const QString& verb) {
+    std::vector<FileOperation> operations;
+    operations.reserve(static_cast<size_t>(paths.size()));
     for (const QString& path : paths) {
-        if (QFile(path).moveToTrash()) {
-            store_.ApplyRemove(path.toStdString());
-        } else {
-            failed.append(path);
-        }
+        operations.push_back(FileOperation{type, path.toStdString()});
+        pendingPaths_.insert(path.toStdString());
     }
-    RefreshVisibleResults();  // trashed entries disappear immediately
-    ReportDeletionFailures(tr("move to Trash"), failed);
+    resultModel_->SetPendingPaths(pendingPaths_);
+    pendingOperationVerbs_.push_back(verb);
+    service_->RequestFileOperations(std::move(operations));
+}
+
+void MainWindow::OnFileOperationsFinished(const FileOperationReport& report) {
+    for (const std::string& path : report.succeeded) {
+        pendingPaths_.erase(path);
+    }
+    QStringList failed;
+    for (const auto& [path, reason] : report.failed) {
+        pendingPaths_.erase(path);
+        failed.append(
+            tr("%1 (%2)").arg(QString::fromStdString(path), QString::fromStdString(reason)));
+    }
+    resultModel_->SetPendingPaths(pendingPaths_);
+    // Batches finish in the order they were requested.
+    const QString verb =
+        pendingOperationVerbs_.empty() ? QString() : pendingOperationVerbs_.front();
+    if (!pendingOperationVerbs_.empty()) {
+        pendingOperationVerbs_.pop_front();
+    }
+    ReportDeletionFailures(verb, failed);
 }
 
 void MainWindow::ReportDeletionFailures(const QString& verb, const QStringList& failed) {
     if (failed.isEmpty()) {
         return;
     }
-    QMessageBox::warning(
-        this, tr("indexed"),
-        tr("Could not %1 %n file(s):\n\n%2", nullptr, failed.size()).arg(verb, failed.join('\n')));
+    auto* box = new QMessageBox(
+        QMessageBox::Warning, tr("indexed"),
+        tr("Could not %1 %n file(s):\n\n%2", nullptr, static_cast<int>(failed.size()))
+            .arg(verb, failed.join('\n')),
+        QMessageBox::Ok, this);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->open();
 }
 
 void MainWindow::RefreshVisibleResults() {
@@ -349,8 +434,8 @@ void MainWindow::SetSearchUiEnabled(bool enabled) {
 }
 
 void MainWindow::UpdateIdleStatus() {
-    indexStatusLabel_->setText(QString::fromStdString(IndexSummaryText(
-        store_.GetPool().Count(), settings_.SelectedRoots(), lastBuildAgeSeconds_)));
+    indexStatusLabel_->setText(QString::fromStdString(
+        IndexSummaryText(lastEntryCount_, settings_.SelectedRoots(), lastBuildAgeSeconds_)));
 }
 
 void MainWindow::UpdateSearchOptionsLabel() {
@@ -364,45 +449,49 @@ void MainWindow::UpdateSearchOptionsLabel() {
 }
 
 void MainWindow::StartIndexing(bool force) {
-    JoinIndexThread();
-    SetSearchUiEnabled(false);  // §19: disable search box while indexing
-    statusBar()->showMessage(tr("Indexing…"));
-
-    const ScanOptions options = CurrentScanOptions();
     const uint64_t staleSeconds = static_cast<uint64_t>(settings_.ReindexIntervalHours()) * 3600ULL;
-
-    indexThread_ = std::thread([this, force, options, staleSeconds]() {
-        const uint64_t nowNs = NowNs();
-        indexer_->StartIndexing(force, options, idxFilePath_, nowNs, staleSeconds);
-        const uint64_t ageSeconds = store_.GetIndexAgeSeconds(NowNs());
-        // Hop back to the GUI thread before touching any widget.
-        QMetaObject::invokeMethod(
-            this,
-            [this, ageSeconds]() {
-                lastBuildAgeSeconds_ = ageSeconds;
-                SetSearchUiEnabled(true);
-                UpdateIdleStatus();
-                searchBox_->setFocus();  // §19: auto-focus after indexing
-                if (!elevated_) {
-                    StartLocalMonitoring();
-                }
-            },
-            Qt::QueuedConnection);
-    });
+    service_->RequestIndexing(force, CurrentScanOptions(), staleSeconds,
+                              /*monitorAfter=*/!elevated_);
 }
 
-void MainWindow::StartLocalMonitoring() {
-    StopLocalMonitoring();
-    localMonitorStop_.store(false);
-    localMonitorThread_ = std::thread(
-        [this]() { indexer_->StartLiveMonitoring(settings_.SelectedRoots(), localMonitorStop_); });
-}
-
-void MainWindow::StopLocalMonitoring() {
-    localMonitorStop_.store(true);
-    if (localMonitorThread_.joinable()) {
-        localMonitorThread_.join();
+void MainWindow::RebuildIndex() {
+    if (elevated_) {
+        SendSignalToHelper(SIGUSR1);  // §9.3: reindex-now request; the helper owns the index
+    } else {
+        StartIndexing(/*force=*/true);
     }
+}
+
+void MainWindow::SetIndexBusy(bool busy) {
+    indexBusy_ = busy;
+    // §19: search is disabled while (re)indexing, and until an index exists
+    // at all (a cancelled first scan leaves none).
+    SetSearchUiEnabled(!busy && hasIndex_);
+    if (busy) {
+        statusBar()->showMessage(tr("Indexing…"));
+    } else {
+        statusBar()->showMessage(tr("Ready."));
+        searchBox_->setFocus();  // §19: auto-focus after indexing
+    }
+}
+
+void MainWindow::OnIndexStatus(const IndexerStatus& status) {
+    if (status.state == IndexerState::Scanning) {
+        statusBar()->showMessage(
+            tr("Indexing… %1 files")
+                .arg(QString::fromStdString(FormatFileCount(status.filesIndexed))));
+    }
+}
+
+void MainWindow::OnIndexChanged(const IndexChange& change) {
+    lastEntryCount_ = change.entryCount;
+    lastBuildAgeSeconds_ = change.indexAgeSeconds;
+    hasIndex_ = true;
+    if (!indexBusy_) {
+        SetSearchUiEnabled(true);  // e.g. the first index arrives from the elevated helper
+    }
+    UpdateIdleStatus();
+    RefreshVisibleResults();
 }
 
 void MainWindow::ShowSettingsDialog() {
@@ -417,6 +506,10 @@ void MainWindow::ShowSettingsDialog() {
     }
 
     const SettingsDialogResult result = dialog.Result();
+    ApplySettings(result);
+}
+
+void MainWindow::ApplySettings(const SettingsDialogResult& result) {
     const std::vector<std::string> oldRoots = settings_.SelectedRoots();
     settings_.SetSelectedRoots(result.selectedRoots);
     settings_.SetExcludedPaths(result.excludedPaths);
@@ -433,77 +526,84 @@ void MainWindow::ShowSettingsDialog() {
         return;
     }
 
-    // §19: diff old vs new roots -> incremental IndexPaths/RemovePaths;
-    // full rebuild when both sides changed. Either incremental path must
-    // also persist the index (or a restart within the reindex interval
-    // load-if-fresh's the pre-change index back) and restart local
-    // monitoring so it covers the new root set.
-    const RootsDiff diff = DiffRoots(oldRoots, result.selectedRoots);
-    if (!diff.added.empty() && !diff.removed.empty()) {
-        StartIndexing(/*force=*/true);
-        return;
-    }
-    JoinIndexThread();
-    if (!diff.added.empty()) {
-        StopLocalMonitoring();
-        SetSearchUiEnabled(false);  // same UX as a full rebuild (§19)
-        statusBar()->showMessage(tr("Indexing…"));
-        indexThread_ = std::thread([this, added = diff.added, excluded = result.excludedPaths]() {
-            indexer_->IndexPaths(added, excluded);
-            indexer_->PersistIndex(idxFilePath_, NowNs());
-            QMetaObject::invokeMethod(
-                this,
-                [this]() {
-                    lastBuildAgeSeconds_ = store_.GetIndexAgeSeconds(NowNs());
-                    SetSearchUiEnabled(true);
-                    UpdateIdleStatus();
-                    searchBox_->setFocus();
-                    if (!elevated_) {
-                        StartLocalMonitoring();
-                    }
-                },
-                Qt::QueuedConnection);
-        });
-    } else if (!diff.removed.empty()) {
-        StopLocalMonitoring();
-        indexer_->RemovePaths(diff.removed);
-        indexer_->PersistIndex(idxFilePath_, NowNs());
-        lastBuildAgeSeconds_ = store_.GetIndexAgeSeconds(NowNs());
-        UpdateIdleStatus();
-        StartLocalMonitoring();
-    }
+    // §19: old vs new roots -> incremental add/remove, or a full rebuild
+    // when both changed; the index is saved and monitoring restarted on the
+    // new roots, all on IndexService's worker (docs/adr/0014).
+    const uint64_t staleSeconds = static_cast<uint64_t>(settings_.ReindexIntervalHours()) * 3600ULL;
+    service_->RequestSettingsChange(oldRoots, CurrentScanOptions(), staleSeconds,
+                                    /*monitorAfter=*/true);
 }
 
 void MainWindow::ElevateForFullAccess() {
-    if (elevated_) {
-        return;  // one polkit prompt per session (§9.2)
+    if (elevated_ || helperProcess_ != nullptr) {
+        return;  // elevated or elevating already: one helper at a time (§9.2)
     }
 
-    StopLocalMonitoring();
-
+    // Reacts to QProcess's signals instead of waitForStarted(), so the UI
+    // keeps running while pkexec starts (docs/adr/0014).
     helperProcess_ = new QProcess(this);
-    helperProcess_->start("pkexec", {"indexed-helper"});
-    if (!helperProcess_->waitForStarted(3000)) {
+    connect(helperProcess_, &QProcess::started, this, &MainWindow::OnHelperStarted);
+    connect(helperProcess_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart || elevated_) {
+            return;
+        }
         statusBar()->showMessage(
             tr("Could not start indexed-helper (declined, or pkexec/indexed-helper not found)."),
             8000);
         helperProcess_->deleteLater();
         helperProcess_ = nullptr;
-        StartLocalMonitoring();  // elevation failed; resume the unprivileged path
-        return;
-    }
+    });
+    connect(helperProcess_, &QProcess::finished, this, &MainWindow::OnHelperFinished);
+    helperProcess_->start(helperCommand_.first(), helperCommand_.mid(1));
+}
 
+void MainWindow::OnHelperFinished() {
+    // pkexec starts (QProcess::started) before its password prompt, so a
+    // declined prompt, or a helper that exits for any reason, ends up here:
+    // go back to indexing locally rather than waiting on a helper that is gone.
+    if (indexWatcher_ != nullptr) {
+        indexWatcher_->deleteLater();
+        indexWatcher_ = nullptr;
+    }
+    if (helperWatcher_ != nullptr) {
+        helperWatcher_->deleteLater();
+        helperWatcher_ = nullptr;
+    }
+    helperProcess_->deleteLater();
+    helperProcess_ = nullptr;
+    const bool wasElevated = elevated_;
+    elevated_ = false;
+    elevateAction_->setEnabled(true);
+    elevateAction_->setText(tr("Elevate for Full-System Access…"));
+    if (wasElevated) {
+        statusBar()->showMessage(tr("Full-system access ended; indexing locally again."), 8000);
+        // A Settings change or rebuild signalled to it may never have been
+        // applied (pkexec starts before its password prompt), so rebuild
+        // rather than reload a possibly outdated index.
+        StartIndexing(/*force=*/helperMayHaveMissedRequest_);
+    }
+    helperMayHaveMissedRequest_ = false;
+}
+
+void MainWindow::OnHelperStarted() {
     elevated_ = true;
     elevateAction_->setEnabled(false);
     elevateAction_->setText(tr("Elevated (full-system access active)"));
     statusBar()->showMessage(tr("Elevated: full-system indexing and monitoring active."), 5000);
 
-    // idxFilePath_ already exists (this GUI's own earlier unprivileged scan
-    // wrote it); indexed.status is new -- created only by the helper -- so
-    // its containing directory is watched too, to catch its first
-    // appearance (indexed-plan.md §9.3).
+    // The helper indexes and monitors from here on.
+    service_->RequestStopLocalIndexing();
+
+    // The helper replaces idxFilePath_ by rename on every save, which a bare
+    // QFileSystemWatcher stops tracking after the first time; IndexFileWatcher
+    // re-arms itself, including when the file doesn't exist yet. The reload
+    // itself runs on IndexService's worker. indexed.status is new -- created
+    // only by the helper -- so its containing directory is watched too, to
+    // catch its first appearance (indexed-plan.md §9.3).
+    indexWatcher_ = new IndexFileWatcher(QString::fromStdString(idxFilePath_), this);
+    connect(indexWatcher_, &IndexFileWatcher::Changed, this,
+            [this]() { service_->RequestReload(); });
     helperWatcher_ = new QFileSystemWatcher(this);
-    helperWatcher_->addPath(QString::fromStdString(idxFilePath_));
     const QString statusDir =
         QString::fromStdString(std::filesystem::path(statusFilePath_).parent_path().string());
     helperWatcher_->addPath(statusDir);
@@ -519,30 +619,17 @@ void MainWindow::ElevateForFullAccess() {
 }
 
 void MainWindow::SendSignalToHelper(int signal) {
+    if (signal == SIGHUP || signal == SIGUSR1) {
+        helperMayHaveMissedRequest_ = true;
+    }
     if (helperProcess_ != nullptr && helperProcess_->state() == QProcess::Running) {
         kill(static_cast<pid_t>(helperProcess_->processId()), signal);
     }
 }
 
 void MainWindow::OnHelperFileChanged(const QString& path) {
-    if (path == QString::fromStdString(idxFilePath_)) {
-        ReloadIndexFromDisk();
-    } else if (path == QString::fromStdString(statusFilePath_)) {
+    if (path == QString::fromStdString(statusFilePath_)) {
         UpdateStatusFromHelperFile();
-    }
-}
-
-void MainWindow::ReloadIndexFromDisk() {
-    const IndexSerializer::LoadResult result = IndexSerializer::Load(idxFilePath_);
-    if (!result.success) {
-        return;  // torn read mid-write by the helper; the next change retries
-    }
-    store_.LoadPool(result.pool, result.buildTimestampNs, result.lastMonitorStopNs);
-    lastBuildAgeSeconds_ = store_.GetIndexAgeSeconds(NowNs());
-    if (searchBox_->text().size() >= 2) {
-        coordinator_->SetQuery(searchBox_->text());  // refresh visible results
-    } else {
-        UpdateIdleStatus();
     }
 }
 
@@ -574,7 +661,7 @@ void MainWindow::StartHotplugWatcher() {
         }
         std::vector<MountInfo> previous = mountEnumerator_.Enumerate();
         while (!hotplugStop_.load()) {
-            if (!MountEnumerator::WaitForChange(fd, /*timeoutMs=*/500) || hotplugStop_.load()) {
+            if (!MountEnumerator::WaitForChange(fd, /*timeoutMs=*/200) || hotplugStop_.load()) {
                 continue;
             }
             std::vector<MountInfo> current = mountEnumerator_.Enumerate();

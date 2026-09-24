@@ -1,5 +1,6 @@
 #include "ui/SearchCoordinator.h"
 
+#include <algorithm>
 #include <shared_mutex>
 #include <utility>
 
@@ -23,6 +24,9 @@ SearchCoordinator::SearchCoordinator(ISearchEngine& engine, IndexStore& store, i
 
 SearchCoordinator::~SearchCoordinator() {
     CancelRunningSearch();
+    for (SearchWorker& worker : workers_) {
+        worker.thread.join();
+    }
 }
 
 void SearchCoordinator::SetQuery(const QString& query) {
@@ -44,6 +48,7 @@ bool SearchCoordinator::IsSearching() const {
 
 void SearchCoordinator::StartSearch() {
     CancelRunningSearch();
+    ReapFinishedWorkers();
 
     if (pendingQuery_.size() < 2) {
         if (!pendingQuery_.isEmpty()) {
@@ -53,13 +58,14 @@ void SearchCoordinator::StartSearch() {
     }
 
     auto token = std::make_shared<std::atomic<bool>>(false);
+    auto done = std::make_shared<std::atomic<bool>>(false);
     cancelToken_ = token;
     searching_.store(true);
 
     const std::string query = pendingQuery_.toStdString();
     const SearchOptions options = options_;
 
-    worker_ = std::thread([this, query, options, token]() {
+    std::thread thread([this, query, options, token, done]() {
         std::vector<DisplayEntry> entries;
         bool capped = false;
         {
@@ -71,22 +77,42 @@ void SearchCoordinator::StartSearch() {
                 entries = BuildDisplayEntries(pool, results);
             }
         }
-        searching_.store(false);
         if (!token->load()) {
-            // Queued connection: the receiver lives on the GUI thread.
-            emit ResultsReady(std::move(entries), capped);
+            // The cancel check is repeated on the GUI thread, where cancels
+            // happen, so a search superseded while its results were in
+            // flight never replaces the newer one's.
+            QMetaObject::invokeMethod(
+                this,
+                [this, token, entries = std::move(entries), capped]() mutable {
+                    if (!token->load()) {
+                        searching_.store(false);
+                        emit ResultsReady(std::move(entries), capped);
+                    }
+                },
+                Qt::QueuedConnection);
         }
+        done->store(true);
     });
+    workers_.push_back(SearchWorker{std::move(thread), done});
 }
 
 void SearchCoordinator::CancelRunningSearch() {
+    // Never joins: a superseded search may take a while to notice its cancel
+    // (e.g. waiting for the store's lock), and the GUI thread must not wait
+    // for it (docs/adr/0014). It finishes on its own and is reaped later.
     if (cancelToken_) {
         cancelToken_->store(true);
     }
-    if (worker_.joinable()) {
-        worker_.join();
-    }
     searching_.store(false);
+}
+
+void SearchCoordinator::ReapFinishedWorkers() {
+    auto finished = std::partition(workers_.begin(), workers_.end(),
+                                   [](const SearchWorker& worker) { return !worker.done->load(); });
+    for (auto it = finished; it != workers_.end(); ++it) {
+        it->thread.join();  // already done: returns immediately
+    }
+    workers_.erase(finished, workers_.end());
 }
 
 }  // namespace indexed

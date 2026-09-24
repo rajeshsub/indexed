@@ -3,6 +3,7 @@
 #include "storage/IndexPool.h"
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace indexed {
 
@@ -12,8 +13,20 @@ namespace indexed {
 // IndexPool::LoadFromPathPool from pathPool + nameStart/pathLen.
 class IndexSerializer {
 public:
-    // Writes pool's Meta()/PathPool() plus the two timestamps to filepath in the v1
-    // on-disk format. Returns false on any I/O failure; does not throw.
+    // The complete v1 file image for pool's live (non-deleted) entries: header
+    // followed by the CRC-covered payload. Save writes exactly these bytes; the
+    // root helper writes them via ReplaceFileForRootWrite instead (docs/adr/0008).
+    static std::vector<char> Serialize(const IndexPool& pool, uint64_t buildTimestampNs,
+                                       uint64_t lastMonitorStopNs);
+
+    // Writes `bytes` to filepath atomically: temp file, fsync, rename,
+    // directory fsync. Returns false on any I/O failure; does not throw.
+    static bool WriteFileAtomically(const std::string& filepath, const std::vector<char>& bytes);
+
+    // Writes pool's live (non-deleted) entries plus the two timestamps to filepath in
+    // the v1 on-disk format; tombstones are dropped, so a loaded pool never contains
+    // any. Atomic: temp file, fsync, rename, directory fsync. Returns false on any
+    // I/O failure; does not throw.
     static bool Save(const std::string& filepath, const IndexPool& pool, uint64_t buildTimestampNs,
                      uint64_t lastMonitorStopNs);
 

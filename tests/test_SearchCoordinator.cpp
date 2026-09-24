@@ -1,7 +1,9 @@
+#include <QElapsedTimer>
 #include <QSignalSpy>
 #include <QTest>
 
 #include "ui/SearchCoordinator.h"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -24,8 +26,11 @@ public:
     std::vector<SearchResult> Search(const IndexPool& pool, std::string_view query,
                                      const SearchOptions& /*options*/,
                                      const std::atomic<bool>& cancelToken) override {
-        ++calls;
+        const int call = ++calls;
         lastQuery = std::string(query);
+        if (call == 1 && firstCallIgnoresCancelMs.load() > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(firstCallIgnoresCancelMs.load()));
+        }
         while (blockUntilReleased.load() && !cancelToken.load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
@@ -43,6 +48,9 @@ public:
     std::atomic<int> calls{0};
     std::atomic<bool> blockUntilReleased{false};
     std::atomic<bool> wasCancelled{false};
+    // A search that takes this long to notice its cancel token (a slow
+    // engine, or one waiting for the store lock).
+    std::atomic<int> firstCallIgnoresCancelMs{0};
     std::string lastQuery;
 };
 
@@ -57,6 +65,7 @@ private slots:
     void debounceCoalescesRapidKeystrokes();
     void resultsArriveAsDisplayEntries();
     void newQueryCancelsRunningSearch();
+    void newQueryDoesNotWaitForASlowToCancelSearch();
 
 private:
     StubEngine engine_;
@@ -68,6 +77,7 @@ void TestSearchCoordinator::init() {
     engine_.calls = 0;
     engine_.blockUntilReleased = false;
     engine_.wasCancelled = false;
+    engine_.firstCallIgnoresCancelMs = 0;
     if (!storePopulated_) {
         FileEntry entry;
         entry.name = "hit.txt";
@@ -135,6 +145,36 @@ void TestSearchCoordinator::newQueryCancelsRunningSearch() {
 
     engine_.blockUntilReleased = false;  // let the *second* search complete
     QVERIFY(ready.wait(2000));
+    QCOMPARE(engine_.lastQuery, std::string("second"));
+}
+
+// Typing must never wait for the previous search to wind down (ADR 0014):
+// the UI thread's event loop stays free while a search that ignores its
+// cancel token for 500 ms is superseded.
+void TestSearchCoordinator::newQueryDoesNotWaitForASlowToCancelSearch() {
+    SearchCoordinator coordinator(engine_, store_, /*debounceMs=*/0);
+    QSignalSpy ready(&coordinator, &SearchCoordinator::ResultsReady);
+    engine_.firstCallIgnoresCancelMs = 500;
+
+    coordinator.SetQuery("first");
+    QTRY_VERIFY_WITH_TIMEOUT(engine_.calls.load() == 1, 2000);
+
+    coordinator.SetQuery("second");
+    qint64 longestEventLoopTurnMs = 0;
+    QElapsedTimer total;
+    total.start();
+    while (engine_.calls.load() < 2 && total.elapsed() < 2000) {
+        QElapsedTimer turn;
+        turn.start();
+        QCoreApplication::processEvents();
+        longestEventLoopTurnMs = std::max(longestEventLoopTurnMs, turn.elapsed());
+    }
+
+    QCOMPARE(engine_.calls.load(), 2);
+    QVERIFY2(longestEventLoopTurnMs < 50,
+             qPrintable(QString("UI thread blocked for %1 ms").arg(longestEventLoopTurnMs)));
+    QVERIFY(ready.wait(2000));
+    QCOMPARE(ready.count(), 1);  // the superseded search's results are discarded
     QCOMPARE(engine_.lastQuery, std::string("second"));
 }
 

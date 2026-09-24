@@ -1,4 +1,6 @@
+#include <fcntl.h>
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include "settings/Logger.h"
 #include "settings/Settings.h"
@@ -259,4 +261,30 @@ TEST(Settings, SetLogLevelUpdatesInMemoryValueBeforeSave) {
     settings.SetLogLevel(LogLevel::Error);
 
     EXPECT_EQ(settings.LogLevel(), LogLevel::Error);
+}
+
+// The root helper loads settings through an fd it has already validated
+// (docs/adr/0008), by pointing Settings at /proc/self/fd/N. That must read
+// exactly what the real path holds.
+TEST(Settings, LoadsTheSameThroughAProcSelfFdPath) {
+    const std::string path = TempFilePath("proc_fd");
+    Settings original(path, "/home/testuser");
+    original.SetSelectedRoots({"/media/veracrypt10", "/home/testuser"});
+    original.SetExcludedPaths({"/home/testuser/.cache"});
+    original.SetReindexIntervalHours(12);
+    original.SetLogLevel(LogLevel::Debug);
+    ASSERT_TRUE(original.Save());
+
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    ASSERT_GE(fd, 0);
+    Settings viaFd("/proc/self/fd/" + std::to_string(fd), "/home/testuser");
+    ASSERT_TRUE(viaFd.Load());
+    ::close(fd);
+
+    EXPECT_EQ(viaFd.SelectedRoots(), original.SelectedRoots());
+    EXPECT_EQ(viaFd.ExcludedPaths(), original.ExcludedPaths());
+    EXPECT_EQ(viaFd.ReindexIntervalHours(), 12);
+    EXPECT_EQ(viaFd.LogLevel(), LogLevel::Debug);
+
+    std::remove(path.c_str());
 }

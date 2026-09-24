@@ -45,6 +45,12 @@ add_library(indexed_ui_widgets STATIC
     FirstRunDialog.cpp
     SettingsDialog.h
     SettingsDialog.cpp
+    IndexFileWatcher.h
+    IndexFileWatcher.cpp
+    UiStallDetector.h
+    UiStallDetector.cpp
+    MainWindow.h
+    MainWindow.cpp
 )
 
 target_include_directories(indexed_ui_widgets
@@ -63,8 +69,6 @@ indexed_enable_warnings(indexed_ui_widgets)
 
 add_executable(indexed
     main.cpp
-    MainWindow.h
-    MainWindow.cpp
 )
 
 target_link_libraries(indexed
