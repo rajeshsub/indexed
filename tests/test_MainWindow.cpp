@@ -19,6 +19,7 @@
 #include <QTimer>
 #include <QUrl>
 
+#include "GapProbe.h"
 #include "indexer/IFileSystemScanner.h"
 #include "search/SearchEngine.h"
 #include "settings/PathUtils.h"
@@ -105,35 +106,13 @@ public:
     std::atomic<bool> hold{false};
 };
 
-// Records the longest gap between 5 ms timer ticks: how long the UI thread
-// went without returning to its event loop.
-class GapProbe {
-public:
-    GapProbe() {
-        timer_.setTimerType(Qt::PreciseTimer);
-        timer_.setInterval(5);
-        QObject::connect(&timer_, &QTimer::timeout,
-                         [this]() { maxGapMs_ = std::max(maxGapMs_, sinceLastTick_.restart()); });
-    }
-    void Start() {
-        maxGapMs_ = 0;
-        sinceLastTick_.start();
-        timer_.start();
-    }
-    qint64 Stop() {
-        timer_.stop();
-        maxGapMs_ = std::max(maxGapMs_, sinceLastTick_.elapsed());
-        return maxGapMs_;
-    }
-
-private:
-    QTimer timer_;
-    QElapsedTimer sinceLastTick_;
-    qint64 maxGapMs_ = 0;
-};
-
-// Pumps the event loop until `done` or the timeout.
-bool PumpUntil(const std::function<bool()>& done, int timeoutMs = 60000) {
+// Pumps the event loop until `done` or the timeout. `probe`, if given, is
+// polled every iteration -- this is the only place GapProbe gets sampled
+// from, since it must be sampled from the thread it watches (see
+// GapProbe.h), and this loop already runs on the UI thread between every
+// processEvents() turn.
+bool PumpUntil(const std::function<bool()>& done, int timeoutMs = 60000,
+               GapProbe* probe = nullptr) {
     QElapsedTimer timer;
     timer.start();
     while (!done()) {
@@ -141,7 +120,13 @@ bool PumpUntil(const std::function<bool()>& done, int timeoutMs = 60000) {
             return false;
         }
         QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        if (probe != nullptr) {
+            probe->Poll();
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (probe != nullptr) {
+            probe->Poll();
+        }
     }
     return true;
 }
@@ -510,9 +495,11 @@ void TestMainWindow::uiNeverBlocksForMoreThan100Ms() {
                              const std::function<bool()>& done) {
         probe.Start();
         trigger();
-        const bool finished = PumpUntil(done);
+        const bool finished = PumpUntil(done, 60000, &probe);
         const qint64 gap = probe.Stop();
-        qInfo("%-40s longest UI pause %lld ms", action, static_cast<long long>(gap));
+        const qint64 descheduled = probe.MaxDescheduledMs();
+        qInfo("%-40s longest UI pause %lld ms (descheduled up to %lld ms, not counted)", action,
+              static_cast<long long>(gap), static_cast<long long>(descheduled));
         if (!finished) {
             failures << QString("%1: did not finish").arg(action);
         } else if (gap > kMaxGapMs) {
