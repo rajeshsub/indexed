@@ -21,6 +21,7 @@ add_executable(indexed_tests
     test_MountEnumerator.cpp
     test_IniFile.cpp
     test_Settings.cpp
+    test_HelperSettings.cpp
     test_Logger.cpp
     test_PathUtils.cpp
     test_DisplayFormat.cpp

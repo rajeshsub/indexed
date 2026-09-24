@@ -17,6 +17,7 @@
 #include "indexer/StatusFile.h"
 #include "indexer/WalkScanner.h"
 #include "platform/Elevation.h"
+#include "settings/HelperSettings.h"
 #include "settings/Logger.h"
 #include "settings/PathUtils.h"
 #include "settings/Settings.h"
@@ -149,30 +150,6 @@ std::unique_ptr<IChangeMonitor> ChooseMonitor(const std::string& root) {
         return inotify;
     }
     return nullptr;
-}
-
-// Reads settings as root without opening indexed.conf by plain path
-// (docs/adr/0008): a FIFO or device planted there would hang the helper or
-// be opened by root. `out` is replaced only by a successful read, so on any
-// refusal the caller keeps what it had (defaults at startup, the previous
-// settings on a reload); the error is returned for the caller to report
-// (kOpenFailed covers the ordinary missing-file case).
-ElevationError LoadSettingsForRoot(const std::string& configPath, const TargetUser& user,
-                                   Settings& out) {
-    const std::string configDir = std::filesystem::path(configPath).parent_path().string();
-    int fd = -1;
-    const ElevationError error = OpenRegularFileForRootRead(configPath, user.uid, configDir, &fd);
-    if (error != ElevationError::kNone) {
-        return error;
-    }
-    Settings viaFd("/proc/self/fd/" + std::to_string(fd), user.homeDir);
-    const bool loaded = viaFd.Load();
-    close(fd);
-    if (!loaded) {
-        return ElevationError::kOpenFailed;
-    }
-    out = viaFd;
-    return ElevationError::kNone;
 }
 
 }  // namespace

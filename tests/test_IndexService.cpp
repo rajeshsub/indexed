@@ -16,6 +16,8 @@
 #include <vector>
 
 using indexed::ChangeCallback;
+using indexed::FileChangeEvent;
+using indexed::FileChangeType;
 using indexed::FileEntry;
 using indexed::FileOperation;
 using indexed::FileOperationReport;
@@ -573,6 +575,107 @@ TEST(IndexService, AFileRemovedDuringARebuildStaysRemoved) {
     ASSERT_EQ(saved.pool.Count(), 1u);
     EXPECT_EQ(saved.pool.GetEntry(0).path, "/r/b.txt");
     std::remove(TempIndexPath("removed_during").c_str());
+}
+
+// The same removed-during-a-scan protection must hold for a Settings change
+// that only adds a root (the incremental IndexPaths path), not just a full
+// rebuild: a file trashed while that scan is running must not be brought
+// back by the persist that follows it, and must not survive a restart.
+TEST(IndexService, AFileRemovedDuringASettingsChangeFullRebuildStaysRemoved) {
+    HeldScanner scanner;
+    IndexStore store;
+    Recorder recorder;
+    // bothChanged() forces the full-rebuild branch (BeginWrite/staging,
+    // same swap-in race FinishScan protects against for a plain rebuild),
+    // not the incremental IndexPaths branch -- that one applies directly to
+    // the live pool and never stages, so a concurrent removal can't race it.
+    const std::string idx = TempIndexPath("removed_during_settings_rebuild");
+    IndexService service(scanner, store, nullptr, idx, AlwaysSucceeds, recorder.Callbacks(),
+                         FakeClock);
+    service.RequestIndexing(true, Roots({"/old"}), 3600, false);
+    service.Flush();
+
+    scanner.Hold();
+    service.RequestSettingsChange({"/old"}, Roots({"/new"}), 3600, false);
+    ASSERT_TRUE(WaitUntil([&] { return scanner.Running() == 1; }));  // /new/a.txt already seen
+
+    service.RequestFileOperations({{FileOperation::Type::MoveToTrash, "/new/a.txt"}});
+    ASSERT_TRUE(WaitUntil([&] { return recorder.ReportCount() == 1; }));
+    scanner.Release();
+    service.Flush();
+
+    EXPECT_EQ(LivePaths(store), (std::vector<std::string>{"/new/b.txt"}));
+    IndexSerializer::LoadResult saved = IndexSerializer::Load(idx);
+    ASSERT_TRUE(saved.success);
+    ASSERT_EQ(saved.pool.Count(), 1u);
+    EXPECT_EQ(saved.pool.GetEntry(0).path, "/new/b.txt");
+    std::remove(idx.c_str());
+}
+
+namespace {
+
+// Fires one Removed event for `path` as soon as monitoring starts, then
+// blocks until told to stop -- enough to exercise the Indexer -> IndexService
+// -> IndexServiceCallbacks::onLiveChange forwarding path without needing a
+// real filesystem watch.
+class FiresOneRemovalMonitor : public IChangeMonitor {
+public:
+    explicit FiresOneRemovalMonitor(std::string path) : path_(std::move(path)) {}
+    bool IsAvailable(const std::string&) const override { return true; }
+    void StartMonitoring(const std::string&, ChangeCallback onChange,
+                         const std::atomic<bool>& stopToken) override {
+        onChange(FileChangeEvent{FileChangeType::Removed, path_, std::string()});
+        while (!stopToken.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+
+private:
+    std::string path_;
+};
+
+}  // namespace
+
+// The service passes the underlying Indexer's mutation callback (fired when
+// a live-monitoring change is applied to the store) straight through to
+// IndexServiceCallbacks::onLiveChange, so a MainWindow watching for it
+// learns about filesystem changes picked up outside a scan.
+TEST(IndexService, ForwardsLiveMonitoringChangesToOnLiveChange) {
+    HeldScanner scanner;
+    IndexStore store;
+    Recorder recorder;
+    std::atomic<int> liveChanges{0};
+    IndexServiceCallbacks callbacks = recorder.Callbacks();
+    callbacks.onLiveChange = [&liveChanges]() { ++liveChanges; };
+    auto factory = [](const std::string& root) -> std::unique_ptr<IChangeMonitor> {
+        return std::make_unique<FiresOneRemovalMonitor>(root + "/a.txt");
+    };
+    IndexService service(scanner, store, factory, TempIndexPath("live_change"), AlwaysSucceeds,
+                         callbacks, FakeClock);
+
+    service.RequestIndexing(true, Roots({"/r"}), 3600, /*monitorAfter=*/true);
+    service.Flush();
+
+    ASSERT_TRUE(WaitUntil([&] { return liveChanges.load() >= 1; }));
+    EXPECT_EQ(LivePaths(store), (std::vector<std::string>{"/r/b.txt"}));
+    service.Shutdown();
+    std::remove(TempIndexPath("live_change").c_str());
+}
+
+// A caller that doesn't care about index-changed notifications (passes a
+// default-constructed IndexServiceCallbacks, leaving onIndexChanged unset)
+// must not crash when one would otherwise be reported.
+TEST(IndexService, WorksWithNoIndexChangedCallbackRegistered) {
+    HeldScanner scanner;
+    IndexStore store;
+    IndexServiceCallbacks callbacks;  // every field left null
+    IndexService service(scanner, store, nullptr, TempIndexPath("no_callback"), AlwaysSucceeds,
+                         callbacks, FakeClock);
+
+    service.RequestIndexing(true, Roots({"/r"}), 3600, false);
+    service.Flush();  // must not crash despite onIndexChanged being unset
+
+    std::remove(TempIndexPath("no_callback").c_str());
 }
 
 // Extra: scan progress arrives per directory from every scanner thread;

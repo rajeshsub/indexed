@@ -10,13 +10,15 @@ namespace {
 using Clock = std::chrono::steady_clock;
 constexpr auto kPingInterval = std::chrono::milliseconds(50);
 constexpr auto kReplyPoll = std::chrono::milliseconds(10);
-constexpr auto kOngoingAfter = std::chrono::seconds(5);
 
 }  // namespace
 
 UiStallDetector::UiStallDetector(std::chrono::milliseconds threshold, Reporter report,
-                                 QObject* parent)
-    : QObject(parent), threshold_(threshold), report_(std::move(report)) {
+                                 QObject* parent, std::chrono::milliseconds ongoingAfter)
+    : QObject(parent),
+      threshold_(threshold),
+      ongoingAfter_(ongoingAfter),
+      report_(std::move(report)) {
     thread_ = std::thread([this]() { Run(); });
 }
 
@@ -43,7 +45,7 @@ void UiStallDetector::Run() {
         bool reportedOngoing = false;
         while (!stopping_ && repliedAtNs->load() == 0) {
             cv_.wait_for(lock, kReplyPoll);
-            if (!reportedOngoing && Clock::now() - sentAt >= kOngoingAfter) {
+            if (!reportedOngoing && Clock::now() - sentAt >= ongoingAfter_) {
                 reportedOngoing = true;
                 report_(
                     std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - sentAt),

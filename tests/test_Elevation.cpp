@@ -569,3 +569,50 @@ TEST(RemoveFileForRootWrite, RefusesWhenAParentDirectoryIsASymlink) {
     std::filesystem::remove_all(baseDir);
     std::filesystem::remove_all(realDir);
 }
+
+// ---------------------------------------------------------------------
+// ReplaceFileForRootWrite failure-cleanup paths
+// ---------------------------------------------------------------------
+
+// If the temp file itself can't be created (e.g. no write permission on
+// the directory, even though ownership checks out), the operation must
+// fail cleanly rather than touch the target.
+TEST(ReplaceFileForRootWrite, FailsCleanlyWhenTheTempFileCannotBeCreated) {
+    std::string baseDir = TempDirPath("replace_temp_uncreatable");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string filePath = baseDir + "/indexed.idx";
+    {
+        std::ofstream existing(filePath);
+        existing << "original";
+    }
+    // Ownership (fstat st_uid) still passes; write permission does not.
+    ASSERT_EQ(chmod(baseDir.c_str(), 0500), 0);
+
+    const ElevationError result =
+        ReplaceFileForRootWrite(filePath, getuid(), getgid(), baseDir, "new-contents");
+
+    chmod(baseDir.c_str(), 0700);  // restore so cleanup can remove the dir
+    EXPECT_EQ(result, ElevationError::kOpenFailed);
+    EXPECT_EQ(ReadFile(filePath), "original");  // untouched
+
+    std::filesystem::remove_all(baseDir);
+}
+
+// If the final renameat fails (here: the target name is occupied by a
+// non-empty directory, which rename(2) refuses to replace), the temp file
+// must be cleaned up and the target left as it was.
+TEST(ReplaceFileForRootWrite, CleansUpTheTempFileWhenTheFinalRenameFails) {
+    std::string baseDir = TempDirPath("replace_rename_fails");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string filePath = baseDir + "/indexed.idx";
+    ASSERT_TRUE(std::filesystem::create_directories(filePath + "/nonempty"));
+
+    const ElevationError result =
+        ReplaceFileForRootWrite(filePath, getuid(), getgid(), baseDir, "new-contents");
+
+    EXPECT_EQ(result, ElevationError::kWriteFailed);
+    EXPECT_FALSE(std::filesystem::exists(baseDir + "/indexed.idx.root.tmp"));
+    EXPECT_TRUE(std::filesystem::is_directory(filePath));  // untouched
+
+    std::filesystem::remove_all(baseDir);
+}

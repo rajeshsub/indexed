@@ -49,6 +49,27 @@ class TestUiStallDetector : public QObject {
     Q_OBJECT
 
 private slots:
+    void reportsAStillOngoingFreezeThenTheFinalDurationWhenItRecovers() {
+        Reports reports;
+        // Shortened for the test: 40 ms threshold, "still ongoing" at 150 ms,
+        // so both reports land well inside a normal test timeout.
+        UiStallDetector detector(std::chrono::milliseconds(40), reports.Reporter(), nullptr,
+                                 std::chrono::milliseconds(150));
+        RunEventLoopFor(std::chrono::milliseconds(50));
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));  // past both thresholds
+        RunEventLoopFor(std::chrono::milliseconds(100));
+
+        const std::vector<Report> snapshot = reports.Snapshot();
+        QCOMPARE(snapshot.size(), size_t{2});
+        QVERIFY(snapshot[0].ongoing);
+        QVERIFY(snapshot[0].duration >= std::chrono::milliseconds(150));
+        QVERIFY(!snapshot[1].ongoing);
+        // The final report's duration is measured from the same sentAt as
+        // the ongoing one, so it must be at least as large.
+        QVERIFY(snapshot[1].duration >= snapshot[0].duration);
+    }
+
     void reportsABlockedUiThreadOnceWithItsDuration() {
         Reports reports;
         UiStallDetector detector(std::chrono::milliseconds(250), reports.Reporter());
