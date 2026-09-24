@@ -71,3 +71,71 @@ complexity (option c).
   full functionality" product decision) rather than one per privileged action.
 - If distro packaging is added later, setcap becomes a genuine option and should be
   revisited as its own ADR rather than retrofitted into this one.
+
+## Follow-up -- atomic index replacement and fd-relative root I/O (2026-09-24)
+
+Crash-safe index saves (temp file, fsync, rename; `IndexSerializer::Save`) broke the
+helper: it passed `/proc/self/fd/N` as the index path so every write landed on an
+already-validated inode, and `/proc/self/fd/N.tmp` cannot be created, so every elevated
+save failed silently. A rename-based save cannot go through a held fd anyway, because the
+fd keeps pointing at the replaced inode. Review of the fix then found the original
+`OpenForRootWrite` itself racy: it checked each directory with `lstat` and then opened by
+path, and `O_NOFOLLOW` only covers the last component, so a user swapping
+`~/.cache/indexed` for a symlink between check and open could have root create or truncate
+`indexed.status` in any directory. Root also read `indexed.conf` and parsed `indexed.idx`,
+both user-controlled, without those checks.
+
+**Decision:** all root file access into the user's directories is fd-relative, through
+three Elevation primitives:
+
+- **Directory walk (shared by all three):** `baseDir` and every directory below it down to
+  the file's parent is opened with `openat(O_DIRECTORY|O_NOFOLLOW)` relative to the
+  previous directory's fd, never re-resolved by path, and must be a real directory owned by
+  the target uid (`fstat` on the opened fd). Swapping any component for a symlink at any
+  moment is refused rather than followed.
+- **`OpenForRootWrite` (log):** opens the file relative to its parent's fd with
+  `O_NOFOLLOW|O_NONBLOCK`; it must be a regular file with one link, owned by the target uid
+  unless this call just created it with `O_EXCL` (then it is chowned to the target uid).
+  `O_TRUNC` is applied afterwards with `ftruncate`, so a FIFO, device, hard link or other
+  unexpected file is refused before a byte of it changes.
+- **`OpenRegularFileForRootRead` (index and `indexed.conf`):** the same checks, read-only;
+  the contents are then read through `/proc/self/fd/N` of that fd. Reading by plain path as
+  root is not acceptable: a FIFO planted there would hang the helper, a symlink to a device
+  would have root open it (with side effects for some devices), and a symlink to another
+  user's index would leak its entry count and age into the user-readable status file. A
+  refused or missing config means defaults at startup and the previous settings on a
+  reload.
+- **`ReplaceFileForRootWrite` (index and status):** creates `<name>.root.tmp` relative to
+  the parent's fd (a stale one is unlinked first; unlink never follows a symlink) with
+  `O_CREAT|O_EXCL|O_NOFOLLOW`, writes it, `fchown`s it to the target uid and primary gid with
+  mode 0600 so the unprivileged GUI can read it, and `renameat`s it over the target. For the
+  index it fsyncs the temp file and the directory; the status file, rewritten per scanned
+  directory and worthless after a crash, skips both, and scan-progress updates to it are
+  written at most every 100 ms (state changes always). The temp name differs from the GUI's
+  `<name>.tmp`, so neither process disturbs the other's in-flight save. Status replacements
+  are serialized by a mutex in the helper, since scan progress arrives from every scanner
+  thread at once.
+
+`Indexer` takes an `IndexFileIo` so the helper can supply the hardened index load/save
+while the GUI keeps `IndexSerializer::Load`/`Save`.
+
+**Consequences:**
+
+- Because root parses `indexed.idx` on behalf of a user who controls it,
+  `IndexSerializer::Load` validates every field against the bytes actually present (entry
+  count, each record's path bounds, `nameStart`), not just the CRC, which the attacker can
+  compute.
+- Live-monitoring changes in the helper are saved too, with an idle gap after each save of
+  at least 2 s and at least 5x that save's duration (`SaveThrottle`, docs/adr/0014), keeping the build timestamp so the index age still triggers the
+  periodic rebuild (docs/adr/0007). A failed live save is retried; pending changes are
+  saved on exit. Serializing holds the store's shared lock, but writing and fsyncing happen
+  after it is released, so live mutations aren't stalled on disk I/O.
+- Versions up to 0.3.1 created `indexed.log` as root. The helper now requires it to be the
+  target user's own file, so when it finds the old root-owned one it removes it
+  (`RemoveFileForRootWrite`, fd-relative) and recreates it; that old log's contents are
+  lost.
+- The GUI watches the index with `IndexFileWatcher`, which re-adds the path after every
+  change (and picks it up once it appears), because `QFileSystemWatcher` stops tracking a
+  file once it is replaced by rename.
+- A helper save failure is logged at ERROR, and a refused index load or settings read at
+  WARNING, instead of being dropped silently.

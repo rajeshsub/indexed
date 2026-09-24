@@ -1,5 +1,7 @@
 #include "ui/ResultModel.h"
 
+#include <QColor>
+
 #include <algorithm>
 #include <cctype>
 
@@ -62,6 +64,15 @@ QVariant ResultModel::data(const QModelIndex& index, int role) const {
                 return QString::fromStdString(entry.dateText);
             default:
                 return QVariant();
+        }
+    }
+
+    if (IsPending(index.row())) {
+        if (role == Qt::ForegroundRole) {
+            return QColor(Qt::gray);
+        }
+        if (role == Qt::ToolTipRole) {
+            return QStringLiteral("Being moved to Trash or deleted…");
         }
     }
 
@@ -149,6 +160,23 @@ void ResultModel::SetEntries(std::vector<DisplayEntry> entries) {
 
 const DisplayEntry& ResultModel::EntryAt(int row) const {
     return entries_.at(static_cast<size_t>(row));
+}
+
+std::string ResultModel::FullPath(int row) const {
+    const DisplayEntry& entry = EntryAt(row);
+    return entry.parentDir == "/" ? "/" + entry.name : entry.parentDir + "/" + entry.name;
+}
+
+void ResultModel::SetPendingPaths(std::unordered_set<std::string> paths) {
+    pendingPaths_ = std::move(paths);
+    if (!entries_.empty()) {
+        emit dataChanged(index(0, 0), index(rowCount() - 1, kColumnCount - 1),
+                         {Qt::ForegroundRole, Qt::ToolTipRole});
+    }
+}
+
+bool ResultModel::IsPending(int row) const {
+    return !pendingPaths_.empty() && pendingPaths_.count(FullPath(row)) != 0;
 }
 
 }  // namespace indexed

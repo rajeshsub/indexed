@@ -1,6 +1,7 @@
 #include <fcntl.h>
 #include <gtest/gtest.h>
 #include <pwd.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "platform/Elevation.h"
@@ -11,6 +12,9 @@
 
 using indexed::ElevationError;
 using indexed::OpenForRootWrite;
+using indexed::OpenRegularFileForRootRead;
+using indexed::RemoveFileForRootWrite;
+using indexed::ReplaceFileForRootWrite;
 using indexed::ResolveTargetUser;
 using indexed::TargetUser;
 
@@ -243,4 +247,325 @@ TEST(OpenForRootWrite, RejectsWhenPathIsNotUnderBaseDir) {
     EXPECT_EQ(fd, -1);
 
     std::filesystem::remove_all(baseDir);
+}
+
+// ---------------------------------------------------------------------
+// ReplaceFileForRootWrite
+// ---------------------------------------------------------------------
+
+TEST(ReplaceFileForRootWrite, ReplacesContentAndLeavesNoTempFile) {
+    std::string baseDir = TempDirPath("replace_ok");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string filePath = baseDir + "/indexed.idx";
+    {
+        std::ofstream existing(filePath);
+        existing << "old";
+    }
+
+    EXPECT_EQ(ReplaceFileForRootWrite(filePath, getuid(), getgid(), baseDir, "new-contents"),
+              ElevationError::kNone);
+
+    EXPECT_EQ(ReadFile(filePath), "new-contents");
+    EXPECT_FALSE(std::filesystem::exists(filePath + ".root.tmp"));
+
+    std::filesystem::remove_all(baseDir);
+}
+
+TEST(ReplaceFileForRootWrite, ResultIsOwnedByTargetUidWithMode0600) {
+    std::string baseDir = TempDirPath("replace_owner");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string filePath = baseDir + "/indexed.idx";
+
+    ASSERT_EQ(ReplaceFileForRootWrite(filePath, getuid(), getgid(), baseDir, "x"),
+              ElevationError::kNone);
+
+    struct stat st{};
+    ASSERT_EQ(lstat(filePath.c_str(), &st), 0);
+    EXPECT_TRUE(S_ISREG(st.st_mode));
+    EXPECT_EQ(st.st_uid, getuid());
+    EXPECT_EQ(st.st_gid, getgid());
+    EXPECT_EQ(st.st_mode & 07777, 0600u);
+
+    std::filesystem::remove_all(baseDir);
+}
+
+TEST(ReplaceFileForRootWrite, RejectsWhenParentDirectoryIsASymlink) {
+    std::string baseDir = TempDirPath("replace_parent_symlink");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string realDir = baseDir + "_realdir";
+    std::filesystem::remove_all(realDir);
+    ASSERT_TRUE(std::filesystem::create_directories(realDir));
+    std::string symlinkedSubdir = baseDir + "/subdir";
+    ASSERT_EQ(symlink(realDir.c_str(), symlinkedSubdir.c_str()), 0);
+
+    EXPECT_EQ(ReplaceFileForRootWrite(symlinkedSubdir + "/indexed.idx", getuid(), getgid(), baseDir,
+                                      "payload"),
+              ElevationError::kSymlinkInPath);
+
+    EXPECT_TRUE(std::filesystem::is_empty(realDir));
+
+    std::filesystem::remove_all(baseDir);
+    std::filesystem::remove_all(realDir);
+}
+
+TEST(ReplaceFileForRootWrite, RejectsWhenDirectoryOwnedByDifferentUid) {
+    std::string baseDir = TempDirPath("replace_ownership_mismatch");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string filePath = baseDir + "/indexed.idx";
+
+    EXPECT_EQ(ReplaceFileForRootWrite(filePath, getuid() + 1, getgid(), baseDir, "payload"),
+              ElevationError::kOwnershipMismatch);
+
+    EXPECT_TRUE(std::filesystem::is_empty(baseDir));
+
+    std::filesystem::remove_all(baseDir);
+}
+
+TEST(ReplaceFileForRootWrite, NeverFollowsAPlantedTempSymlink) {
+    std::string baseDir = TempDirPath("replace_temp_symlink");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string victim = TempDirPath("replace_temp_symlink_victim");
+    {
+        std::ofstream out(victim);
+        out << "do-not-touch";
+    }
+    std::string filePath = baseDir + "/indexed.idx";
+    ASSERT_EQ(symlink(victim.c_str(), (filePath + ".root.tmp").c_str()), 0);
+
+    EXPECT_EQ(ReplaceFileForRootWrite(filePath, getuid(), getgid(), baseDir, "payload"),
+              ElevationError::kNone);
+
+    EXPECT_EQ(ReadFile(victim), "do-not-touch");
+    EXPECT_EQ(ReadFile(filePath), "payload");
+    EXPECT_FALSE(std::filesystem::exists(std::filesystem::symlink_status(filePath + ".root.tmp")));
+
+    std::filesystem::remove_all(baseDir);
+    std::filesystem::remove(victim);
+}
+
+TEST(ReplaceFileForRootWrite, ReplacesASymlinkAtTheFinalPathWithoutFollowingIt) {
+    std::string baseDir = TempDirPath("replace_final_symlink");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string victim = TempDirPath("replace_final_symlink_victim");
+    {
+        std::ofstream out(victim);
+        out << "do-not-touch";
+    }
+    std::string filePath = baseDir + "/indexed.idx";
+    ASSERT_EQ(symlink(victim.c_str(), filePath.c_str()), 0);
+
+    EXPECT_EQ(ReplaceFileForRootWrite(filePath, getuid(), getgid(), baseDir, "payload"),
+              ElevationError::kNone);
+
+    EXPECT_EQ(ReadFile(victim), "do-not-touch");
+    EXPECT_FALSE(std::filesystem::is_symlink(filePath));
+    EXPECT_EQ(ReadFile(filePath), "payload");
+
+    std::filesystem::remove_all(baseDir);
+    std::filesystem::remove(victim);
+}
+
+// The unprivileged GUI's IndexSerializer::Save uses "<name>.tmp"; the helper
+// must never unlink or rename a save the GUI has in flight.
+TEST(ReplaceFileForRootWrite, LeavesTheUnprivilegedSavesTempFileAlone) {
+    std::string baseDir = TempDirPath("replace_gui_temp");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string filePath = baseDir + "/indexed.idx";
+    {
+        std::ofstream guiTemp(filePath + ".tmp");
+        guiTemp << "gui-in-flight";
+    }
+
+    ASSERT_EQ(ReplaceFileForRootWrite(filePath, getuid(), getgid(), baseDir, "helper"),
+              ElevationError::kNone);
+
+    EXPECT_EQ(ReadFile(filePath + ".tmp"), "gui-in-flight");
+    EXPECT_EQ(ReadFile(filePath), "helper");
+
+    std::filesystem::remove_all(baseDir);
+}
+
+// ---------------------------------------------------------------------
+// OpenRegularFileForRootRead
+// ---------------------------------------------------------------------
+
+TEST(OpenRegularFileForRootRead, OpensAnOwnedRegularFile) {
+    std::string baseDir = TempDirPath("read_ok");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string filePath = baseDir + "/indexed.idx";
+    {
+        std::ofstream out(filePath);
+        out << "index-bytes";
+    }
+
+    int fd = -1;
+    ASSERT_EQ(OpenRegularFileForRootRead(filePath, getuid(), baseDir, &fd), ElevationError::kNone);
+    ASSERT_GE(fd, 0);
+    char buffer[16] = {};
+    EXPECT_EQ(read(fd, buffer, sizeof(buffer)), 11);
+    EXPECT_EQ(std::string(buffer, 11), "index-bytes");
+    close(fd);
+
+    std::filesystem::remove_all(baseDir);
+}
+
+TEST(OpenRegularFileForRootRead, RejectsAFifoWithoutBlocking) {
+    std::string baseDir = TempDirPath("read_fifo");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string filePath = baseDir + "/indexed.idx";
+    ASSERT_EQ(mkfifo(filePath.c_str(), 0600), 0);
+
+    int fd = -1;
+    EXPECT_EQ(OpenRegularFileForRootRead(filePath, getuid(), baseDir, &fd),
+              ElevationError::kNotRegularFile);
+    EXPECT_EQ(fd, -1);
+
+    std::filesystem::remove_all(baseDir);
+}
+
+TEST(OpenRegularFileForRootRead, RejectsASymlinkToAnotherFile) {
+    std::string baseDir = TempDirPath("read_symlink");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string victim = TempDirPath("read_symlink_victim");
+    {
+        std::ofstream out(victim);
+        out << "someone-elses-index";
+    }
+    std::string filePath = baseDir + "/indexed.idx";
+    ASSERT_EQ(symlink(victim.c_str(), filePath.c_str()), 0);
+
+    int fd = -1;
+    EXPECT_EQ(OpenRegularFileForRootRead(filePath, getuid(), baseDir, &fd),
+              ElevationError::kSymlinkInPath);
+    EXPECT_EQ(fd, -1);
+
+    std::filesystem::remove_all(baseDir);
+    std::filesystem::remove(victim);
+}
+
+// A FIFO planted where the log or status file should be must be refused
+// before it can block the helper. O_RDWR is used here only because it never
+// blocks on a FIFO, so a regression shows up as a failed assertion rather
+// than a hung test; the fix must reject the FIFO for any flags.
+TEST(OpenForRootWrite, RejectsAFifo) {
+    std::string baseDir = TempDirPath("fifo");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string filePath = baseDir + "/indexed.status";
+    ASSERT_EQ(mkfifo(filePath.c_str(), 0600), 0);
+
+    int fd = -1;
+    EXPECT_NE(OpenForRootWrite(filePath, getuid(), baseDir, O_RDWR | O_CREAT, 0600, &fd),
+              ElevationError::kNone);
+    EXPECT_EQ(fd, -1);
+
+    std::filesystem::remove_all(baseDir);
+}
+
+// With fs.protected_hardlinks=0 a user can hard-link a file they can't write
+// into their own directory; root must not truncate or write through it.
+TEST(OpenForRootWrite, RejectsAHardLinkedFileWithoutTruncatingIt) {
+    std::string baseDir = TempDirPath("hardlink");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string original = baseDir + "/precious";
+    {
+        std::ofstream out(original);
+        out << "do-not-truncate";
+    }
+    std::string filePath = baseDir + "/indexed.status";
+    ASSERT_EQ(link(original.c_str(), filePath.c_str()), 0);
+
+    int fd = -1;
+    EXPECT_EQ(
+        OpenForRootWrite(filePath, getuid(), baseDir, O_WRONLY | O_CREAT | O_TRUNC, 0600, &fd),
+        ElevationError::kNotRegularFile);
+    EXPECT_EQ(fd, -1);
+    EXPECT_EQ(ReadFile(original), "do-not-truncate");
+
+    std::filesystem::remove_all(baseDir);
+}
+
+TEST(OpenForRootWrite, StillTruncatesAnAcceptedFileWhenAsked) {
+    std::string baseDir = TempDirPath("truncate_ok");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string filePath = baseDir + "/indexed.status";
+    {
+        std::ofstream out(filePath);
+        out << "old status";
+    }
+
+    int fd = -1;
+    ASSERT_EQ(
+        OpenForRootWrite(filePath, getuid(), baseDir, O_WRONLY | O_CREAT | O_TRUNC, 0600, &fd),
+        ElevationError::kNone);
+    EXPECT_EQ(write(fd, "new", 3), 3);
+    close(fd);
+    EXPECT_EQ(ReadFile(filePath), "new");
+
+    std::filesystem::remove_all(baseDir);
+}
+
+TEST(OpenForRootWrite, RejectsWhenBaseDirIsASymlink) {
+    std::string realDir = TempDirPath("base_symlink_real");
+    ASSERT_TRUE(std::filesystem::create_directories(realDir));
+    std::string baseDir = TempDirPath("base_symlink");
+    ASSERT_EQ(symlink(realDir.c_str(), baseDir.c_str()), 0);
+
+    int fd = -1;
+    EXPECT_EQ(OpenForRootWrite(baseDir + "/indexed.status", getuid(), baseDir,
+                               O_WRONLY | O_CREAT | O_TRUNC, 0600, &fd),
+              ElevationError::kSymlinkInPath);
+    EXPECT_EQ(fd, -1);
+    EXPECT_TRUE(std::filesystem::is_empty(realDir));
+
+    std::filesystem::remove(baseDir);
+    std::filesystem::remove_all(realDir);
+}
+
+// ---------------------------------------------------------------------
+// RemoveFileForRootWrite
+// ---------------------------------------------------------------------
+
+TEST(RemoveFileForRootWrite, RemovesAFileInsideBaseDir) {
+    std::string baseDir = TempDirPath("remove_ok");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string filePath = baseDir + "/indexed.log";
+    std::ofstream(filePath) << "old root-owned log";
+
+    EXPECT_EQ(RemoveFileForRootWrite(filePath, getuid(), baseDir), ElevationError::kNone);
+    EXPECT_FALSE(std::filesystem::exists(std::filesystem::symlink_status(filePath)));
+
+    std::filesystem::remove_all(baseDir);
+}
+
+TEST(RemoveFileForRootWrite, RemovesASymlinkEntryWithoutTouchingItsTarget) {
+    std::string baseDir = TempDirPath("remove_symlink");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string victim = TempDirPath("remove_symlink_victim");
+    std::ofstream(victim) << "do-not-touch";
+    std::string filePath = baseDir + "/indexed.log";
+    ASSERT_EQ(symlink(victim.c_str(), filePath.c_str()), 0);
+
+    EXPECT_EQ(RemoveFileForRootWrite(filePath, getuid(), baseDir), ElevationError::kNone);
+    EXPECT_FALSE(std::filesystem::exists(std::filesystem::symlink_status(filePath)));
+    EXPECT_EQ(ReadFile(victim), "do-not-touch");
+
+    std::filesystem::remove_all(baseDir);
+    std::filesystem::remove(victim);
+}
+
+TEST(RemoveFileForRootWrite, RefusesWhenAParentDirectoryIsASymlink) {
+    std::string baseDir = TempDirPath("remove_parent_symlink");
+    ASSERT_TRUE(std::filesystem::create_directories(baseDir));
+    std::string realDir = baseDir + "_realdir";
+    std::filesystem::remove_all(realDir);
+    ASSERT_TRUE(std::filesystem::create_directories(realDir));
+    std::ofstream(realDir + "/indexed.log") << "keep";
+    ASSERT_EQ(symlink(realDir.c_str(), (baseDir + "/subdir").c_str()), 0);
+
+    EXPECT_EQ(RemoveFileForRootWrite(baseDir + "/subdir/indexed.log", getuid(), baseDir),
+              ElevationError::kSymlinkInPath);
+    EXPECT_EQ(ReadFile(realDir + "/indexed.log"), "keep");
+
+    std::filesystem::remove_all(baseDir);
+    std::filesystem::remove_all(realDir);
 }

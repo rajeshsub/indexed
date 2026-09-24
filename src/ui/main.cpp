@@ -4,6 +4,7 @@
 #include <QApplication>
 #include <QDialog>
 
+#include "indexer/InotifyWatcher.h"
 #include "indexer/WalkScanner.h"
 #include "platform/MountEnumerator.h"
 #include "search/SearchEngine.h"
@@ -13,8 +14,12 @@
 #include "storage/IndexStore.h"
 #include "ui/FirstRunDialog.h"
 #include "ui/MainWindow.h"
+#include "ui/UiStallDetector.h"
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
+#include <string>
 
 namespace {
 
@@ -77,8 +82,25 @@ int main(int argc, char* argv[]) {
     indexed::SearchEngine engine;
     indexed::WalkScanner scanner;
 
-    indexed::MainWindow window(settings, store, engine, scanner, dirs.indexPath, dirs.logPath);
+    indexed::MainWindow window(
+        settings, store, engine, scanner,
+        [](const std::string&) -> std::unique_ptr<indexed::IChangeMonitor> {
+            return std::make_unique<indexed::InotifyWatcher>();
+        },
+        indexed::MainWindow::RunFileOperation, {"pkexec", "indexed-helper"}, dirs.indexPath,
+        dirs.logPath);
     window.show();
+
+    // Field evidence for docs/adr/0014: any UI-thread freeze over 250 ms is
+    // logged with its duration (and once more if still frozen after 5 s).
+    indexed::UiStallDetector stallDetector(
+        std::chrono::milliseconds(250),
+        [&logger](std::chrono::milliseconds duration, bool ongoing) {
+            logger.Log(std::string(ongoing ? "UI thread unresponsive for "
+                                           : "UI thread was unresponsive for ") +
+                           std::to_string(duration.count()) + (ongoing ? " ms so far" : " ms"),
+                       indexed::LogLevel::Warning);
+        });
     window.StartIndexing(/*force=*/false);
 
     return app.exec();

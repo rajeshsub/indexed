@@ -11,6 +11,7 @@ public:
     MOCK_METHOD(void, BeginWrite, (), (override));
     MOCK_METHOD(void, AddEntry, (const FileEntry& entry), (override));
     MOCK_METHOD(void, EndWrite, (), (override));
+    MOCK_METHOD(void, AbortWrite, (), (override));
 
     MOCK_METHOD(void, ApplyAdd, (const FileEntry& entry), (override));
     MOCK_METHOD(void, ApplyRemove, (std::string_view path), (override));
@@ -27,6 +28,7 @@ public:
 
     MOCK_METHOD(void, SetBuildTimestamp, (uint64_t nsSinceEpoch), (override));
     MOCK_METHOD(uint64_t, GetIndexAgeSeconds, (uint64_t nowNs), (const, override));
+    MOCK_METHOD(uint64_t, GetBuildTimestamp, (), (const, override));
 
     MOCK_METHOD(void, SetLastMonitorStop, (uint64_t nsSinceEpoch), (override));
     MOCK_METHOD(uint64_t, GetLastMonitorStop, (), (const, override));

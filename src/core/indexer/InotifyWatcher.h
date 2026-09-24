@@ -2,6 +2,7 @@
 
 #include "indexer/IChangeMonitor.h"
 #include <atomic>
+#include <cstddef>
 #include <string>
 
 namespace indexed {
@@ -38,8 +39,14 @@ public:
     // Never resets to false once set for the lifetime of this instance.
     bool WatchLimitExceeded() const;
 
+    // How many directories the initial walk in the last StartMonitoring
+    // call put watches on. The walk stops early once stopToken is set, so a
+    // caller stopping monitoring never waits for a whole-tree walk.
+    size_t InitialWatchCount() const;
+
 private:
     std::atomic<bool> watchLimitExceeded_{false};
+    std::atomic<size_t> initialWatchCount_{0};
 };
 
 }  // namespace indexed

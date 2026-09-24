@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -72,6 +73,18 @@ void WireRealBackingPool(NiceMock<MockIndexStore>& store, IndexPool& pool,
     }));
     ON_CALL(store, GetPool()).WillByDefault(ReturnRef(pool));
     ON_CALL(store, GetSearchMutex()).WillByDefault(ReturnRef(mutex));
+}
+
+// Parses a file image handed to an injected IndexFileIo::save.
+IndexSerializer::LoadResult LoadFromBytes(const std::vector<char>& bytes) {
+    const std::string path = TempFilePath("from_bytes");
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+    IndexSerializer::LoadResult result = IndexSerializer::Load(path);
+    std::remove(path.c_str());
+    return result;
 }
 
 }  // namespace
@@ -636,4 +649,233 @@ TEST(Indexer, ApplyChangeEventDuringConcurrentForceRescanBothCompleteWithoutCorr
     // the primary assertion; this final check just confirms the store is
     // still in a usable state afterward.
     EXPECT_NO_THROW({ [[maybe_unused]] size_t count = realStore.GetPool().Count(); });
+}
+
+// Regression: a root removed via Settings (RemovePaths + PersistIndex) must
+// stay removed after the next launch's load-if-fresh StartIndexing, e.g. a
+// VeraCrypt volume indexed at /media/veracrypt6 and later remounted and
+// re-added at /media/veracrypt10 must not show up under both mount points.
+TEST(Indexer, RemovedRootStaysRemovedAfterPersistAndReload) {
+    NiceMock<MockFileSystemScanner> scanner;
+    indexed::IndexStore store;
+
+    const std::string idxPath = TempFilePath("removed_root_reload");
+    std::remove(idxPath.c_str());
+
+    EXPECT_CALL(scanner, Scan(_, _, _, _))
+        .WillOnce(Invoke([](const ScanOptions&, indexed::ScanCallback onEntry,
+                            indexed::ProgressCallback, const std::atomic<bool>&) {
+            onEntry(MakeEntry("veracrypt6", "/media/veracrypt6", 0, 1, indexed::kAttrDirectory));
+            onEntry(MakeEntry("photo.jpg", "/media/veracrypt6/photo.jpg"));
+        }))
+        .WillOnce(Invoke([](const ScanOptions&, indexed::ScanCallback onEntry,
+                            indexed::ProgressCallback, const std::atomic<bool>&) {
+            onEntry(MakeEntry("photo.jpg", "/media/veracrypt10/photo.jpg"));
+        }));
+
+    Indexer indexer(scanner, store, nullptr, nullptr);
+    ScanOptions options;
+    options.rootPaths = {"/media/veracrypt6"};
+    indexer.StartIndexing(/*force=*/true, options, idxPath, /*nowNs=*/1'000'000'000ULL,
+                          /*staleThresholdSeconds=*/3600);
+
+    indexer.RemovePaths({"/media/veracrypt6"});
+    indexer.IndexPaths({"/media/veracrypt10"});
+    indexer.PersistIndex(idxPath, /*nowNs=*/2'000'000'000ULL);
+
+    indexed::IndexStore reloaded;
+    Indexer nextLaunch(scanner, reloaded, nullptr, nullptr);
+    options.rootPaths = {"/media/veracrypt10"};
+    nextLaunch.StartIndexing(/*force=*/false, options, idxPath, /*nowNs=*/3'000'000'000ULL,
+                             /*staleThresholdSeconds=*/3600);
+
+    std::vector<std::string> livePaths;
+    const IndexPool& pool = reloaded.GetPool();
+    for (size_t i = 0; i < pool.Count(); ++i) {
+        if (!pool.IsDeleted(i)) {
+            livePaths.emplace_back(pool.GetEntry(i).path);
+        }
+    }
+    EXPECT_THAT(livePaths, ElementsAre("/media/veracrypt10/photo.jpg"));
+
+    std::remove(idxPath.c_str());
+}
+
+// The root helper can't use the default path-based save (docs/adr/0008), so
+// both save sites must route through an injected IndexFileIo::save when one
+// is given, and must not also write the path themselves.
+TEST(Indexer, StartIndexingAndPersistIndexUseInjectedSave) {
+    NiceMock<MockFileSystemScanner> scanner;
+    indexed::IndexStore store;
+
+    const std::string idxPath = TempFilePath("injected_saver");
+    std::remove(idxPath.c_str());
+
+    ON_CALL(scanner, Scan(_, _, _, _))
+        .WillByDefault(Invoke(
+            [](const ScanOptions&, indexed::ScanCallback onEntry, indexed::ProgressCallback,
+               const std::atomic<bool>&) { onEntry(MakeEntry("a.txt", "/home/user/a.txt")); }));
+
+    struct SaveCall {
+        std::string path;
+        uint64_t count = 0;
+        uint64_t buildTimestampNs = 0;
+    };
+    std::vector<SaveCall> calls;
+    indexed::IndexFileIo io;
+    io.save = [&calls](const std::string& path, const std::vector<char>& bytes) {
+        const IndexSerializer::LoadResult saved = LoadFromBytes(bytes);
+        calls.push_back({path, saved.pool.Count(), saved.buildTimestampNs});
+        return true;
+    };
+    Indexer indexer(scanner, store, nullptr, nullptr, nullptr, io);
+
+    ScanOptions options;
+    options.rootPaths = {"/home/user"};
+    indexer.StartIndexing(/*force=*/true, options, idxPath, /*nowNs=*/5ULL,
+                          /*staleThresholdSeconds=*/3600);
+    indexer.PersistIndex(idxPath, /*nowNs=*/9ULL);
+
+    ASSERT_EQ(calls.size(), 2u);
+    EXPECT_EQ(calls[0].path, idxPath);
+    EXPECT_EQ(calls[0].count, 1u);
+    EXPECT_EQ(calls[0].buildTimestampNs, 5ULL);
+    EXPECT_EQ(calls[1].path, idxPath);
+    EXPECT_EQ(calls[1].buildTimestampNs, 9ULL);
+    EXPECT_FALSE(IndexSerializer::Load(idxPath).success);
+
+    std::remove(idxPath.c_str());
+}
+
+// Same for the load-if-fresh path: the helper must never open the index by a
+// plain path as root (a FIFO or device planted there would hang or be
+// opened by root), so StartIndexing must load through IndexFileIo::load.
+TEST(Indexer, StartIndexingLoadsThroughInjectedLoad) {
+    NiceMock<MockFileSystemScanner> scanner;
+    indexed::IndexStore store;
+    EXPECT_CALL(scanner, Scan(_, _, _, _)).Times(0);
+
+    std::vector<std::string> loadedPaths;
+    indexed::IndexFileIo io;
+    io.load = [&loadedPaths](const std::string& path) {
+        loadedPaths.push_back(path);
+        IndexSerializer::LoadResult result;
+        result.success = true;
+        result.pool.AddEntry(MakeEntry("cached.txt", "/home/user/cached.txt"));
+        result.buildTimestampNs = 1'000'000'000ULL;
+        return result;
+    };
+    Indexer indexer(scanner, store, nullptr, nullptr, nullptr, io);
+
+    ScanOptions options;
+    options.rootPaths = {"/home/user"};
+    indexer.StartIndexing(/*force=*/false, options, "/some/indexed.idx",
+                          /*nowNs=*/2'000'000'000ULL, /*staleThresholdSeconds=*/3600);
+
+    EXPECT_THAT(loadedPaths, ElementsAre("/some/indexed.idx"));
+    ASSERT_EQ(store.GetPool().Count(), 1u);
+    EXPECT_EQ(store.GetPool().GetEntry(0).path, "/home/user/cached.txt");
+}
+
+// Live-monitoring changes in the root helper must reach the file the GUI
+// reloads, but must not reset the index age: that age is what triggers the
+// periodic full rebuild (docs/adr/0007).
+TEST(Indexer, PersistLiveChangesSavesCurrentPoolKeepingBuildTimestamp) {
+    NiceMock<MockFileSystemScanner> scanner;
+    indexed::IndexStore store;
+    store.SetBuildTimestamp(123'000'000'000ULL);
+    store.SetLastMonitorStop(7ULL);
+    store.ApplyAdd(MakeEntry("new.txt", "/home/user/new.txt"));
+
+    const std::string idxPath = TempFilePath("persist_live");
+    std::remove(idxPath.c_str());
+
+    Indexer indexer(scanner, store, nullptr, nullptr);
+    indexer.PersistLiveChanges(idxPath);
+
+    IndexSerializer::LoadResult result = IndexSerializer::Load(idxPath);
+    ASSERT_TRUE(result.success);
+    ASSERT_EQ(result.pool.Count(), 1u);
+    EXPECT_EQ(result.pool.GetEntry(0).path, "/home/user/new.txt");
+    EXPECT_EQ(result.buildTimestampNs, 123'000'000'000ULL);
+    EXPECT_EQ(result.lastMonitorStopNs, 7ULL);
+    EXPECT_EQ(store.GetBuildTimestamp(), 123'000'000'000ULL);
+
+    std::remove(idxPath.c_str());
+}
+
+// Writing and fsyncing a large index can take a while; live-monitoring
+// mutations need the exclusive lock, so the write must happen after the
+// shared lock taken for serializing has been released.
+TEST(Indexer, SavesWithoutHoldingTheSearchLock) {
+    NiceMock<MockFileSystemScanner> scanner;
+    indexed::IndexStore store;
+    store.ApplyAdd(MakeEntry("a.txt", "/home/user/a.txt"));
+
+    std::vector<bool> lockFreeDuringSave;
+    indexed::IndexFileIo io;
+    io.save = [&](const std::string&, const std::vector<char>&) {
+        std::unique_lock<std::shared_mutex> lock(store.GetSearchMutex(), std::try_to_lock);
+        lockFreeDuringSave.push_back(lock.owns_lock());
+        return true;
+    };
+    Indexer indexer(scanner, store, nullptr, nullptr, nullptr, io);
+
+    indexer.PersistIndex("/unused/indexed.idx", /*nowNs=*/5ULL);
+    indexer.PersistLiveChanges("/unused/indexed.idx");
+
+    EXPECT_THAT(lockFreeDuringSave, ElementsAre(true, true));
+}
+
+// The helper re-marks the index dirty when a live save fails, so the change
+// is retried instead of waiting for the next one.
+TEST(Indexer, PersistLiveChangesReportsWhetherTheSaveSucceeded) {
+    NiceMock<MockFileSystemScanner> scanner;
+    indexed::IndexStore store;
+    bool saveSucceeds = false;
+    indexed::IndexFileIo io;
+    io.save = [&saveSucceeds](const std::string&, const std::vector<char>&) {
+        return saveSucceeds;
+    };
+    Indexer indexer(scanner, store, nullptr, nullptr, nullptr, io);
+
+    EXPECT_FALSE(indexer.PersistLiveChanges("/unused/indexed.idx"));
+    saveSucceeds = true;
+    EXPECT_TRUE(indexer.PersistLiveChanges("/unused/indexed.idx"));
+}
+
+// A rebuild superseded by a newer request is cancelled (ADR 0014); the
+// cancelled scan must leave the live index and the file on disk untouched.
+TEST(Indexer, CancelledScanNeitherSwapsInNorSaves) {
+    NiceMock<MockFileSystemScanner> scanner;
+    NiceMock<MockIndexStore> store;
+    IndexPool backingPool;
+    std::shared_mutex backingMutex;
+    WireRealBackingPool(store, backingPool, backingMutex);
+
+    std::atomic<bool> cancel{false};
+    EXPECT_CALL(scanner, Scan(_, _, _, _))
+        .WillOnce(Invoke([&cancel](const ScanOptions&, indexed::ScanCallback onEntry,
+                                   indexed::ProgressCallback, const std::atomic<bool>& token) {
+            onEntry(MakeEntry("partial.txt", "/home/user/partial.txt"));
+            cancel.store(true);  // a newer request arrives mid-scan
+            EXPECT_TRUE(token.load());
+        }));
+    EXPECT_CALL(store, EndWrite()).Times(0);
+    EXPECT_CALL(store, AbortWrite()).Times(1);  // the partial pool is freed right away
+    EXPECT_CALL(store, SetBuildTimestamp(_)).Times(0);
+
+    int saves = 0;
+    indexed::IndexFileIo io;
+    io.save = [&saves](const std::string&, const std::vector<char>&) {
+        ++saves;
+        return true;
+    };
+    Indexer indexer(scanner, store, nullptr, nullptr, nullptr, io);
+
+    ScanOptions options;
+    options.rootPaths = {"/home/user"};
+    EXPECT_FALSE(indexer.StartIndexing(/*force=*/true, options, "/unused/indexed.idx",
+                                       /*nowNs=*/5ULL, /*staleThresholdSeconds=*/3600, &cancel));
+    EXPECT_EQ(saves, 0);
 }

@@ -39,7 +39,12 @@ Verified 2026-08-22 against `.pre-commit-config.yaml` + `.github/workflows/ci.ym
 
 Config hashes at verification time (post-review fixes, see below):
 - `.pre-commit-config.yaml`: `ee9d283ae44ad903766f64c92e45be04b567121f53202cbd55163be0fa1a415a`
-- `.github/workflows/ci.yml`: `395acd5d17b9b2b4dd9345bf4d45d322d19e62dbf3b938dde05a4061bfca298d`
+- `.github/workflows/ci.yml`: `80538f10da675c28f48f48e79afc2a20ca75c70c4743dbf6aed51afdf2ea50b5`
+  (updated 2026-09-24: the debug, release and ASAN jobs now install `dbus`, which the UI
+  latency test in `tests/test_MainWindow.cpp` needs for its private session bus. The local
+  hook chain is unchanged (`.pre-commit-config.yaml` hash above) and was re-run green,
+  including the pre-push build+test gate. The CI-side change runs only on push, so it is
+  config-reviewed here, not executed.)
 - `.github/workflows/dependency-scan.yml`: `7fc38c9fd9c9f73a7ccbc62b8e6d111e5d06fcbf0229268f5c25bf7f24f25a1b`
 
 Re-verify only when these hashes change, or on request.

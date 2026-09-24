@@ -11,6 +11,8 @@ add_executable(indexed_tests
     test_SearchEngine.cpp
     test_Indexer.cpp
     test_StatusFile.cpp
+    test_SaveThrottle.cpp
+    test_IndexService.cpp
     test_WalkScanner.cpp
     test_InotifyWatcher.cpp
     test_FanotifyMonitor.cpp
@@ -70,3 +72,7 @@ indexed_add_qtest(test_SearchCoordinator)
 indexed_add_qtest(test_SearchLineEdit)
 indexed_add_qtest(test_FirstRunDialog)
 indexed_add_qtest(test_SettingsDialog)
+indexed_add_qtest(test_IndexFileWatcher)
+indexed_add_qtest(test_UiStallDetector)
+indexed_add_qtest(test_MainWindow)
+set_tests_properties(test_MainWindow PROPERTIES TIMEOUT 600)

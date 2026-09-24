@@ -5,6 +5,52 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Folders removed in Settings no longer reappear after a restart. The index
+  file stored removed entries as if they were still present, so a drive
+  indexed under one mount point (for example `/media/veracrypt6`) and later
+  re-added under another (`/media/veracrypt10`) showed up under both.
+- Elevated mode now saves the index again. Since 0.3.1's crash-safe saves,
+  every save by `indexed-helper` failed silently, so rebuilds and settings
+  changes made while elevated never reached the search window.
+- The search window now picks up every index update from the elevated
+  helper, not just the first one.
+- Index saves now also sync the containing directory, so a crash right after
+  a save can no longer lose it.
+- In elevated mode, files created, changed or deleted now show up in search
+  within a few seconds. Previously they only appeared after the next full
+  rebuild.
+
+### Changed
+- The search window no longer freezes during index work. Loading, rebuilding,
+  applying Settings changes, reloading the elevated helper's index, and Move
+  to Trash / Delete all run in the background; the window stays responsive
+  throughout. A rebuild or Settings change requested while another is
+  running cancels it and starts over. Files being moved to Trash or deleted
+  are greyed out until done, and failures are listed in a single dialog.
+- Closing the window during a rebuild is now immediate: the scan is
+  cancelled. If a file is being moved to Trash or deleted, the app finishes
+  that before it exits.
+- Declining the password prompt for full-system access (or the helper
+  exiting) now returns to indexing locally instead of leaving the app
+  waiting on a helper that isn't running.
+- Typing no longer waits for the previous search to wind down.
+- Reveal in File Manager no longer blocks when the file manager is slow or
+  missing.
+- UI freezes longer than 250 ms are now written to the log as WARNINGs.
+- `indexed.log` must now belong to you rather than root. If an earlier
+  version of `indexed-helper` created it as root, it is replaced on the next
+  elevation and its old contents are discarded.
+
+### Security
+- `indexed-helper` (root) no longer follows a path the user controls when
+  opening its log, status, settings or index files: every directory is
+  opened relative to an already-checked parent, so swapping one for a symlink
+  mid-operation is refused. A pipe, device or hard link planted at one of
+  those names is refused instead of opened.
+- A crafted index file can no longer crash `indexed-helper` or make it read
+  out of bounds: every record is checked against the file's actual size.
+
 ## [0.3.1] - 2026-09-18
 
 ### Fixed

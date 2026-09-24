@@ -10,6 +10,8 @@
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <string_view>
+#include <vector>
 
 using indexed::Crc32;
 using indexed::FileEntry;
@@ -255,4 +257,126 @@ TEST(IndexSerializerTest, SaveLeavesNoStrayTempFile) {
     EXPECT_EQ(stat(tempPath.c_str(), &st), -1);
 
     std::remove(path.c_str());
+}
+
+// A tombstoned entry (IndexPool::MarkDeleted) must not come back to life
+// across a save/load cycle: the on-disk record has no deleted flag, so Save
+// has to leave tombstones out entirely.
+TEST(IndexSerializerTest, TombstonedEntriesAreNotResurrectedByLoad) {
+    IndexPool pool;
+    pool.AddEntry(MakeEntry("old.txt", "/media/veracrypt6/old.txt", 1, 1));
+    pool.AddEntry(MakeEntry("kept.txt", "/home/user/kept.txt", 2, 2));
+    pool.AddEntry(MakeEntry("gone.txt", "/media/veracrypt6/gone.txt", 3, 3));
+    pool.AddEntry(MakeEntry("Second.PDF", "/home/user/docs/Second.PDF", 4, 4));
+    pool.AddEntry(MakeEntry("third", "/home/user/third", 5, 5, indexed::kAttrDirectory));
+    pool.MarkDeleted(0);
+    pool.MarkDeleted(2);
+
+    const std::string path = TempFilePath("tombstones");
+    ASSERT_TRUE(IndexSerializer::Save(path, pool, 1, 0));
+
+    IndexSerializer::LoadResult result = IndexSerializer::Load(path);
+    ASSERT_TRUE(result.success);
+    ASSERT_EQ(result.pool.Count(), 3u);
+
+    // Surviving entries follow tombstones, so each one's compacted path
+    // offset must be right, not just the first.
+    const size_t survivors[] = {1, 3, 4};
+    for (size_t i = 0; i < 3; ++i) {
+        auto expected = pool.GetEntry(survivors[i]);
+        auto actual = result.pool.GetEntry(i);
+        EXPECT_FALSE(result.pool.IsDeleted(i));
+        EXPECT_EQ(actual.path, expected.path);
+        EXPECT_EQ(actual.name, expected.name);
+        EXPECT_EQ(actual.nameLower, expected.nameLower);
+        EXPECT_EQ(actual.size, expected.size);
+        EXPECT_EQ(actual.attributes, expected.attributes);
+    }
+
+    std::remove(path.c_str());
+}
+
+namespace {
+
+// Body layout (docs/adr/0003): u64 pathPoolSize, pathPool bytes, then one
+// 34-byte record per entry (u64 size, u64 lastModified, u32 attributes,
+// u64 pathOffset, u32 pathLen, u16 nameStart), then u64 lastMonitorStop.
+constexpr size_t kCrcOffset = 22;
+constexpr size_t kEntryCountOffset = 14;
+constexpr size_t kRecordPathOffsetField = 8 + 8 + 4;
+constexpr size_t kRecordPathLenField = kRecordPathOffsetField + 8;
+constexpr size_t kRecordNameStartField = kRecordPathLenField + 4;
+
+// A single-entry file image whose fields a test can then tamper with.
+// ResealCrc recomputes the CRC so the tampering reaches the structural
+// checks, which is what an attacker who controls the file can always do.
+struct CraftedIndex {
+    std::vector<char> bytes;
+    size_t firstRecord = 0;
+
+    template <typename T>
+    void Put(size_t offset, T value) {
+        std::memcpy(bytes.data() + offset, &value, sizeof(T));
+    }
+    void ResealCrc() {
+        const std::string_view body(bytes.data() + kHeaderSize, bytes.size() - kHeaderSize);
+        Put(kCrcOffset, Crc32(body));
+    }
+    IndexSerializer::LoadResult WriteAndLoad(const std::string& name) {
+        const std::string path = TempFilePath(name);
+        {
+            std::ofstream out(path, std::ios::binary | std::ios::trunc);
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        }
+        IndexSerializer::LoadResult result;
+        EXPECT_NO_THROW(result = IndexSerializer::Load(path));
+        std::remove(path.c_str());
+        return result;
+    }
+};
+
+CraftedIndex MakeCraftedIndex() {
+    IndexPool pool;
+    pool.AddEntry(MakeEntry("a.txt", "/home/user/a.txt", 1, 1));
+    CraftedIndex crafted;
+    crafted.bytes = IndexSerializer::Serialize(pool, 1, 0);
+    crafted.firstRecord = kHeaderSize + sizeof(uint64_t) + pool.PathPool().size();
+    return crafted;
+}
+
+}  // namespace
+
+// Root parses this file on behalf of a user who controls it (docs/adr/0008),
+// so every field must be checked against what the file actually holds; the
+// CRC proves nothing when the attacker computes it.
+TEST(IndexSerializerTest, RejectsEntryCountLargerThanTheFileCanHold) {
+    CraftedIndex crafted = MakeCraftedIndex();
+    crafted.Put(kEntryCountOffset, uint64_t{1} << 60);
+
+    EXPECT_FALSE(crafted.WriteAndLoad("huge_count").success);
+}
+
+TEST(IndexSerializerTest, RejectsRecordWhosePathRunsPastThePathPool) {
+    CraftedIndex crafted = MakeCraftedIndex();
+    crafted.Put(crafted.firstRecord + kRecordPathOffsetField, uint64_t{4096});
+    crafted.ResealCrc();
+
+    EXPECT_FALSE(crafted.WriteAndLoad("path_past_pool").success);
+}
+
+TEST(IndexSerializerTest, RejectsRecordWhoseNameStartIsPastItsPath) {
+    CraftedIndex crafted = MakeCraftedIndex();
+    crafted.Put(crafted.firstRecord + kRecordNameStartField, uint16_t{500});
+    crafted.ResealCrc();
+
+    EXPECT_FALSE(crafted.WriteAndLoad("name_past_path").success);
+}
+
+TEST(IndexSerializerTest, RejectsRecordWhosePathBoundsOverflow) {
+    CraftedIndex crafted = MakeCraftedIndex();
+    crafted.Put(crafted.firstRecord + kRecordPathOffsetField, UINT64_MAX - 1);
+    crafted.Put(crafted.firstRecord + kRecordPathLenField, uint32_t{5});
+    crafted.ResealCrc();
+
+    EXPECT_FALSE(crafted.WriteAndLoad("path_overflow").success);
 }

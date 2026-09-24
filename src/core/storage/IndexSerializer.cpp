@@ -1,11 +1,13 @@
 #include "storage/IndexSerializer.h"
 
+#include <fcntl.h>
 #include <unistd.h>
 
 #include "storage/Crc32.h"
 #include "storage/EntryMeta.h"
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <type_traits>
 
@@ -53,39 +55,71 @@ bool ReadValue(const std::vector<char>& buffer, size_t& offset, T& value) {
 
 }  // namespace
 
-bool IndexSerializer::Save(const std::string& filepath, const IndexPool& pool,
-                           uint64_t buildTimestampNs, uint64_t lastMonitorStopNs) {
+std::vector<char> IndexSerializer::Serialize(const IndexPool& pool, uint64_t buildTimestampNs,
+                                             uint64_t lastMonitorStopNs) {
     const std::vector<EntryMeta>& meta = pool.Meta();
     const std::vector<char>& pathPool = pool.PathPool();
 
+    // The on-disk record has no deleted flag, so tombstones are dropped here
+    // (and their path bytes compacted away) rather than written as live
+    // entries that Load would resurrect.
+    uint64_t liveCount = 0;
+    uint64_t livePathBytes = 0;
+    for (const EntryMeta& entry : meta) {
+        if (entry.deleted == 0) {
+            ++liveCount;
+            livePathBytes += entry.pathLen;
+        }
+    }
+
     std::vector<char> body;
-    body.reserve(sizeof(uint64_t) + pathPool.size() + meta.size() * kEntryRecordSize +
+    body.reserve(sizeof(uint64_t) + livePathBytes + liveCount * kEntryRecordSize +
                  sizeof(uint64_t));
 
-    AppendValue(body, static_cast<uint64_t>(pathPool.size()));
-    body.insert(body.end(), pathPool.begin(), pathPool.end());
-
+    AppendValue(body, livePathBytes);
     for (const EntryMeta& entry : meta) {
+        if (entry.deleted == 0) {
+            const auto begin = pathPool.begin() + static_cast<std::ptrdiff_t>(entry.pathOffset);
+            body.insert(body.end(), begin, begin + entry.pathLen);
+        }
+    }
+
+    uint64_t pathOffset = 0;
+    for (const EntryMeta& entry : meta) {
+        if (entry.deleted != 0) {
+            continue;
+        }
         AppendValue(body, entry.size);
         AppendValue(body, entry.lastModified);
         AppendValue(body, entry.attributes);
-        AppendValue(body, entry.pathOffset);
+        AppendValue(body, pathOffset);
         AppendValue(body, entry.pathLen);
         AppendValue(body, entry.nameStart);
+        pathOffset += entry.pathLen;
     }
 
     AppendValue(body, lastMonitorStopNs);
 
     const uint32_t crc = Crc32(std::string_view(body.data(), body.size()));
 
-    std::vector<char> header;
-    header.reserve(kHeaderSize);
-    AppendValue(header, kMagic);
-    AppendValue(header, kVersion);
-    AppendValue(header, buildTimestampNs);
-    AppendValue(header, static_cast<uint64_t>(meta.size()));
-    AppendValue(header, crc);
+    std::vector<char> bytes;
+    bytes.reserve(kHeaderSize + body.size());
+    AppendValue(bytes, kMagic);
+    AppendValue(bytes, kVersion);
+    AppendValue(bytes, buildTimestampNs);
+    AppendValue(bytes, liveCount);
+    AppendValue(bytes, crc);
+    bytes.insert(bytes.end(), body.begin(), body.end());
+    return bytes;
+}
 
+bool IndexSerializer::Save(const std::string& filepath, const IndexPool& pool,
+                           uint64_t buildTimestampNs, uint64_t lastMonitorStopNs) {
+    return WriteFileAtomically(filepath, Serialize(pool, buildTimestampNs, lastMonitorStopNs));
+}
+
+bool IndexSerializer::WriteFileAtomically(const std::string& filepath,
+                                          const std::vector<char>& bytes) {
     // Write to a sibling temp file and fsync+rename it over filepath rather than
     // truncating filepath in place: rename() is atomic on the same filesystem, so a
     // crash or power loss mid-write leaves either the old index or the new one intact,
@@ -96,8 +130,7 @@ bool IndexSerializer::Save(const std::string& filepath, const IndexPool& pool,
         if (!out) {
             return false;
         }
-        out.write(header.data(), static_cast<std::streamsize>(header.size()));
-        out.write(body.data(), static_cast<std::streamsize>(body.size()));
+        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
         out.flush();
         if (!out.good()) {
             std::remove(tempPath.c_str());
@@ -119,7 +152,20 @@ bool IndexSerializer::Save(const std::string& filepath, const IndexPool& pool,
         std::remove(tempPath.c_str());
         return false;
     }
-    return true;
+
+    // The rename is only durable once the directory entry naming the new file
+    // is on disk too; without this a crash can still lose the replacement.
+    std::string dirPath = std::filesystem::path(filepath).parent_path().string();
+    if (dirPath.empty()) {
+        dirPath = ".";
+    }
+    const int dirFd = open(dirPath.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dirFd < 0) {
+        return false;
+    }
+    const bool dirSynced = fsync(dirFd) == 0;
+    close(dirFd);
+    return dirSynced;
 }
 
 IndexSerializer::LoadResult IndexSerializer::Load(const std::string& filepath) {
@@ -170,6 +216,12 @@ IndexSerializer::LoadResult IndexSerializer::Load(const std::string& filepath) {
                                buffer.begin() + static_cast<std::ptrdiff_t>(offset + pathPoolSize));
     offset += pathPoolSize;
 
+    // The file is untrusted input (the root helper parses a file the user
+    // controls, docs/adr/0008): every field is checked against what the
+    // buffer actually holds before it is used, not just covered by the CRC.
+    if (entryCount > (buffer.size() - offset) / kEntryRecordSize) {
+        return {};
+    }
     std::vector<EntryMeta> meta;
     meta.reserve(entryCount);
     for (uint64_t i = 0; i < entryCount; ++i) {
@@ -180,6 +232,10 @@ IndexSerializer::LoadResult IndexSerializer::Load(const std::string& filepath) {
             !ReadValue(buffer, offset, entry.pathOffset) ||
             !ReadValue(buffer, offset, entry.pathLen) ||
             !ReadValue(buffer, offset, entry.nameStart)) {
+            return {};
+        }
+        if (entry.pathOffset > pathPoolSize || entry.pathLen > pathPoolSize - entry.pathOffset ||
+            entry.nameStart > entry.pathLen) {
             return {};
         }
         meta.push_back(entry);

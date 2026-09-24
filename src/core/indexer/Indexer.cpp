@@ -10,12 +10,13 @@ namespace indexed {
 
 Indexer::Indexer(IFileSystemScanner& scanner, IIndexStore& store,
                  ChangeMonitorFactory monitorFactory, StatusCallback statusCallback,
-                 MutationCallback mutationCallback)
+                 MutationCallback mutationCallback, IndexFileIo indexFileIo)
     : scanner_(scanner),
       store_(store),
       monitorFactory_(std::move(monitorFactory)),
       statusCallback_(std::move(statusCallback)),
-      mutationCallback_(std::move(mutationCallback)) {}
+      mutationCallback_(std::move(mutationCallback)),
+      indexFileIo_(std::move(indexFileIo)) {}
 
 void Indexer::ReportStatus(IndexerState state, std::string message, uint64_t filesIndexed,
                            std::vector<std::string> locations, uint64_t indexAgeSeconds) {
@@ -31,10 +32,12 @@ void Indexer::ReportStatus(IndexerState state, std::string message, uint64_t fil
     statusCallback_(status);
 }
 
-void Indexer::StartIndexing(bool force, const ScanOptions& options, const std::string& idxFilePath,
-                            uint64_t nowNs, uint64_t staleThresholdSeconds) {
+bool Indexer::StartIndexing(bool force, const ScanOptions& options, const std::string& idxFilePath,
+                            uint64_t nowNs, uint64_t staleThresholdSeconds,
+                            const std::atomic<bool>* cancelToken) {
     if (!force) {
-        IndexSerializer::LoadResult result = IndexSerializer::Load(idxFilePath);
+        IndexSerializer::LoadResult result =
+            indexFileIo_.load ? indexFileIo_.load(idxFilePath) : IndexSerializer::Load(idxFilePath);
         if (result.success) {
             const uint64_t ageSeconds = nowNs > result.buildTimestampNs
                                             ? (nowNs - result.buildTimestampNs) / 1'000'000'000ULL
@@ -47,7 +50,7 @@ void Indexer::StartIndexing(bool force, const ScanOptions& options, const std::s
                                 result.lastMonitorStopNs);
                 ReportStatus(IndexerState::Idle, "Index loaded", entryCount, options.rootPaths,
                              ageSeconds);
-                return;
+                return true;
             }
         }
     }
@@ -55,7 +58,8 @@ void Indexer::StartIndexing(bool force, const ScanOptions& options, const std::s
     ReportStatus(IndexerState::Scanning, "Scanning...", 0, options.rootPaths, 0);
     store_.BeginWrite();
     uint64_t filesFound = 0;
-    std::atomic<bool> cancelToken{false};
+    const std::atomic<bool> neverCancelled{false};
+    const std::atomic<bool>& cancel = cancelToken != nullptr ? *cancelToken : neverCancelled;
     scanner_.Scan(
         options,
         [this, &filesFound](const FileEntry& entry) {
@@ -65,33 +69,34 @@ void Indexer::StartIndexing(bool force, const ScanOptions& options, const std::s
         [this, &options](uint64_t found, const std::string& currentDir) {
             ReportStatus(IndexerState::Scanning, currentDir, found, options.rootPaths, 0);
         },
-        cancelToken);
+        cancel);
+    if (cancel.load()) {
+        // The staged pool is partial: never swap it in or save it.
+        store_.AbortWrite();
+        return false;
+    }
     store_.EndWrite();
     store_.SetBuildTimestamp(nowNs);
-    // GetPool() returns a reference into the live store with no locking of
-    // its own (see IIndexStore::GetPool), and a concurrent live-monitoring
-    // mutation (ApplyAdd/ApplyRemove/...) on another thread can reallocate
-    // its backing vectors mid-serialize. Save only reads, so a shared lock
-    // is enough to block out concurrent exclusive mutators for its duration.
-    {
-        std::shared_lock lock(store_.GetSearchMutex());
-        IndexSerializer::Save(idxFilePath, store_.GetPool(), nowNs, store_.GetLastMonitorStop());
-    }
+    SaveIndex(idxFilePath, nowNs);
     ReportStatus(IndexerState::Idle, "Indexing complete", filesFound, options.rootPaths, 0);
+    return true;
 }
 
-void Indexer::IndexPaths(const std::vector<std::string>& paths,
-                         const std::vector<std::string>& excludedPaths) {
+bool Indexer::IndexPaths(const std::vector<std::string>& paths,
+                         const std::vector<std::string>& excludedPaths,
+                         const std::atomic<bool>* cancelToken) {
     ScanOptions options;
     options.rootPaths = paths;
     options.excludedPaths = excludedPaths;
-    std::atomic<bool> cancelToken{false};
+    const std::atomic<bool> neverCancelled{false};
+    const std::atomic<bool>& cancel = cancelToken != nullptr ? *cancelToken : neverCancelled;
     scanner_.Scan(
         options, [this](const FileEntry& entry) { store_.ApplyAdd(entry); },
         [this, &paths](uint64_t found, const std::string& currentDir) {
             ReportStatus(IndexerState::Scanning, currentDir, found, paths, 0);
         },
-        cancelToken);
+        cancel);
+    return !cancel.load();
 }
 
 void Indexer::RemovePaths(const std::vector<std::string>& paths) {
@@ -102,11 +107,31 @@ void Indexer::RemovePaths(const std::vector<std::string>& paths) {
 
 void Indexer::PersistIndex(const std::string& idxFilePath, uint64_t nowNs) {
     store_.SetBuildTimestamp(nowNs);
-    // Same GetPool()-without-locking hazard as StartIndexing's save (see the
-    // comment there): PersistIndex can run concurrently with live-monitoring
-    // mutations, so the read needs the same shared lock for its duration.
-    std::shared_lock lock(store_.GetSearchMutex());
-    IndexSerializer::Save(idxFilePath, store_.GetPool(), nowNs, store_.GetLastMonitorStop());
+    SaveIndex(idxFilePath, nowNs);
+}
+
+bool Indexer::PersistLiveChanges(const std::string& idxFilePath) {
+    return SaveIndex(idxFilePath, std::nullopt);
+}
+
+bool Indexer::SaveIndex(const std::string& idxFilePath, std::optional<uint64_t> buildTimestampNs) {
+    // GetPool() returns a reference into the live store with no locking of
+    // its own (see IIndexStore::GetPool), and a concurrent live-monitoring
+    // mutation on another thread can reallocate its backing vectors
+    // mid-serialize, so serializing holds the shared lock. Writing (and
+    // fsyncing) the result happens after it is released, so those mutations
+    // aren't stalled on disk I/O.
+    std::vector<char> bytes;
+    {
+        std::shared_lock lock(store_.GetSearchMutex());
+        bytes = IndexSerializer::Serialize(store_.GetPool(),
+                                           buildTimestampNs.value_or(store_.GetBuildTimestamp()),
+                                           store_.GetLastMonitorStop());
+    }
+    if (indexFileIo_.save) {
+        return indexFileIo_.save(idxFilePath, bytes);
+    }
+    return IndexSerializer::WriteFileAtomically(idxFilePath, bytes);
 }
 
 void Indexer::StartLiveMonitoring(const std::vector<std::string>& roots,
