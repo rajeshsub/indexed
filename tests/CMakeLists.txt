@@ -12,6 +12,7 @@ add_executable(indexed_tests
     test_Indexer.cpp
     test_StatusFile.cpp
     test_SaveThrottle.cpp
+    test_GapProbe.cpp
     test_IndexService.cpp
     test_WalkScanner.cpp
     test_InotifyWatcher.cpp
