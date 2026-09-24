@@ -10,6 +10,7 @@
 #include <QDesktopServices>
 #include <QFile>
 #include <QFileInfo>
+#include <QHeaderView>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QStatusBar>
@@ -254,6 +255,17 @@ void MainWindow::WireSearch() {
                 const ResultView::SelectionSnapshot selection =
                     preserve ? resultView_->SnapshotSelection() : ResultView::SelectionSnapshot{};
                 resultModel_->SetEntries(std::move(entries));
+                // SetEntries's beginResetModel()/endResetModel() replaces the
+                // data in engine order; it doesn't re-run whatever sort the
+                // header is currently showing (that only happens on a header
+                // click), so a sort chosen before this search would silently
+                // stop applying -- while the header's arrow kept claiming it
+                // was still active -- without this.
+                const QHeaderView* header = resultView_->header();
+                if (header->sortIndicatorSection() >= 0) {
+                    resultView_->sortByColumn(header->sortIndicatorSection(),
+                                              header->sortIndicatorOrder());
+                }
                 if (preserve) {
                     resultView_->RestoreSelection(selection);
                 }

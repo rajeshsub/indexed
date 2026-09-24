@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Sorting by the Size column now stays active across a new search. Sorting,
+  then typing a different query, silently reverted the results to unsorted
+  order while the Size column header still showed the sort as active, so a
+  second click on it appeared to do nothing.
+
+### Fixed
 - Folders removed in Settings no longer reappear after a restart. The index
   file stored removed entries as if they were still present, so a drive
   indexed under one mount point (for example `/media/veracrypt6`) and later
