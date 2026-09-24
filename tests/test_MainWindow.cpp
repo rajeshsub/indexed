@@ -10,6 +10,7 @@
 #include <QDBusContext>
 #include <QDesktopServices>
 #include <QElapsedTimer>
+#include <QHeaderView>
 #include <QLabel>
 #include <QMessageBox>
 #include <QProcess>
@@ -204,6 +205,7 @@ private slots:
     void cleanupTestCase();
     void init();
     void cleanup();
+    void sizeColumnSortPersistsAcrossANewSearch();
     void searchBoxIsDisabledOnlyForRebuildsAndSettingsChanges();
     void decliningElevationReturnsToLocalIndexing();
     void aSettingsChangeSentToAHelperThatExitsIsNotLost();
@@ -327,6 +329,70 @@ std::unique_ptr<MainWindow> TestMainWindow::MakeWindow(FileOperationRunner runne
         std::move(helperCommand), idx_, dir_ + "/indexed.log");
     window->show();
     return window;
+}
+
+// Regression: sorting by Size, then running a *new* search (not just
+// re-running the same one), used to silently drop back to engine order
+// while the header's sort indicator kept showing Size/Descending as
+// active -- so a second click on Size did nothing (OnHeaderClicked only
+// flips the arrow the *first* time landing on a column), making it look
+// like clicking Size "doesn't work". Reproduced by driving a real mouse
+// click on the header, exactly as a user would, not by calling sort()
+// directly.
+void TestMainWindow::sizeColumnSortPersistsAcrossANewSearch() {
+    auto window = MakeWindow(MainWindow::RunFileOperation);
+    window->StartIndexing(false);
+    QVERIFY(WaitForSearchReady(*window));
+
+    // Sizes deliberately out of name order, so a size sort produces a row
+    // order a plain re-search (engine order) would not.
+    store_->ApplyAdd(SyntheticEntry(kRoot, 0));  // pads the store so entries exist
+    FileEntry small, medium, large;
+    small.name = "sortprobe_a.txt";
+    small.path = std::string(kRoot) + "/probe/" + small.name;
+    small.size = 100;
+    medium.name = "sortprobe_b.txt";
+    medium.path = std::string(kRoot) + "/probe/" + medium.name;
+    medium.size = 500;
+    large.name = "sortprobe_c.txt";
+    large.path = std::string(kRoot) + "/probe/" + large.name;
+    large.size = 900;
+    // Insert in an order that is neither size- nor name-sorted, so neither
+    // "still name order" nor "still insertion order" would pass by luck.
+    store_->ApplyAdd(medium);
+    store_->ApplyAdd(small);
+    store_->ApplyAdd(large);
+
+    QVERIFY(SearchFor(*window, "sortprobe"));
+    QCOMPARE(Model(*window)->rowCount(), 3);
+
+    QHeaderView* header = View(*window)->header();
+    const int x = header->sectionViewportPosition(ResultModel::kSize) +
+                  header->sectionSize(ResultModel::kSize) / 2;
+    QTest::mouseClick(header->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      QPoint(x, header->height() / 2));
+    QVERIFY(PumpUntil([&]() {
+        return header->sortIndicatorSection() == ResultModel::kSize &&
+               header->sortIndicatorOrder() == Qt::DescendingOrder;
+    }));
+    QCOMPARE(Model(*window)->EntryAt(0).sizeBytes, 900u);  // largest first
+
+    // A *different* query, not the same one re-run: SearchCleared then a
+    // fresh SearchRequested, the same sequence a user typing a new term
+    // produces.
+    SearchBox(*window)->clear();
+    emit SearchBox(*window)->SearchCleared();
+    QTest::qWait(50);
+    QVERIFY(SearchFor(*window, "sortprobe"));
+
+    // The header still claims Size/Descending is active...
+    QCOMPARE(header->sortIndicatorSection(), static_cast<int>(ResultModel::kSize));
+    QCOMPARE(header->sortIndicatorOrder(), Qt::DescendingOrder);
+    // ...and the row order must actually match that claim.
+    QCOMPARE(Model(*window)->rowCount(), 3);
+    QCOMPARE(Model(*window)->EntryAt(0).sizeBytes, 900u);
+    QCOMPARE(Model(*window)->EntryAt(1).sizeBytes, 500u);
+    QCOMPARE(Model(*window)->EntryAt(2).sizeBytes, 100u);
 }
 
 // Test 18
