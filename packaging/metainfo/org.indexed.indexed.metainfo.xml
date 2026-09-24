@@ -38,6 +38,14 @@
   </provides>
 
   <releases>
+    <release version="0.4.0" date="2026-09-25">
+      <description>
+        <p>The search window no longer freezes during index work, rebuilds, or file
+        operations. Removed folders no longer reappear after a restart, elevated mode
+        saves and reflects live changes correctly again, and the root helper hardens
+        its file access against symlink and planted-file attacks.</p>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-08-31">
       <description>
         <p>Live monitoring now updates search results as files change, and file operations

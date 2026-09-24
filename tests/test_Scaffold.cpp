@@ -8,7 +8,7 @@
 #include "Version.h"
 
 TEST(Version, MatchesProjectVersion) {
-    EXPECT_STREQ(indexed::GetVersionString(), "0.3.1");
+    EXPECT_STREQ(indexed::GetVersionString(), "0.4.0");
 }
 
 TEST(ToolchainSmoke, Re2PartialMatchFindsSubstringPattern) {

@@ -3,7 +3,7 @@
 namespace indexed {
 
 // Bumped alongside CMakeLists.txt's project() version and CHANGELOG.md.
-inline constexpr const char* kVersion = "0.3.1";
+inline constexpr const char* kVersion = "0.4.0";
 
 const char* GetVersionString();
 
