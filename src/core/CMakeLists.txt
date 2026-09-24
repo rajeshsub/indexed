@@ -49,6 +49,8 @@ add_library(indexed_core STATIC
     settings/PathUtils.cpp
     settings/Settings.h
     settings/Settings.cpp
+    settings/HelperSettings.h
+    settings/HelperSettings.cpp
     settings/Logger.h
     settings/Logger.cpp
 )

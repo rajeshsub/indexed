@@ -311,6 +311,67 @@ TEST(InotifyWatcher, AlreadyPopulatedDirectoryMovedInReportsItsContents) {
         WaitFor([&] { return HasEvent(collector.Snapshot(), FileChangeType::Added, later); }));
 }
 
+// The stop check inside WatchAndEmitNewSubtree's own walk (distinct from
+// AddWatchesRecursive's initial-walk check, docs/adr/0014): a large,
+// already-populated directory moved into the watched tree live must not
+// force StartMonitoring to finish walking it before honoring a stop
+// request.
+TEST(InotifyWatcher, StopDuringALiveMovedInSubtreeWalkReturnsPromptly) {
+    TempDir tempDir;
+    ASSERT_FALSE(tempDir.Path().empty());
+    TempDir stagingDir;
+    ASSERT_FALSE(stagingDir.Path().empty());
+
+    const std::string staged = stagingDir.Path() + "/payload";
+    constexpr int kDirCount = 20000;
+    for (int i = 0; i < kDirCount; ++i) {
+        fs::create_directories(staged + "/d" + std::to_string(i));
+        WriteFile(staged + "/d" + std::to_string(i) + "/f.txt", "x");
+    }
+
+    InotifyWatcher watcher;
+    EventCollector collector;
+    std::atomic<bool> stopToken{false};
+    std::atomic<bool> returned{false};
+    std::thread monitorThread([&]() {
+        watcher.StartMonitoring(
+            tempDir.Path(),
+            [&collector](const FileChangeEvent& event) { collector.OnChange(event); }, stopToken);
+        returned.store(true, std::memory_order_relaxed);
+    });
+    WaitUntilWatcherReady(tempDir.Path(), collector);
+
+    const std::string moved = tempDir.Path() + "/payload";
+    std::error_code ec;
+    fs::rename(staged, moved, ec);
+    ASSERT_FALSE(ec);
+
+    // Races the walk from a second thread rather than stopping inline, so
+    // the walk has actually started (and is mid-flight, not merely queued)
+    // when the flag flips.
+    std::thread stopper([&]() { stopToken.store(true, std::memory_order_relaxed); });
+    stopper.join();
+
+    ASSERT_TRUE(
+        WaitFor([&] { return returned.load(std::memory_order_relaxed); }, std::chrono::seconds(5)))
+        << "StartMonitoring never returned";
+    if (monitorThread.joinable()) {
+        monitorThread.join();
+    }
+
+    // The decisive assertion: with the stop check working, the walk cannot
+    // have reported anywhere near all kDirCount moved-in files -- it was cut
+    // short mid-iteration. Without the check (see the mutation this test
+    // guards against), it reports all of them regardless of when stop was
+    // requested, because nothing inside the loop ever looks at stopToken.
+    const std::vector<FileChangeEvent> events = collector.Snapshot();
+    const auto addedCount = std::count_if(events.begin(), events.end(), [&](const auto& event) {
+        return event.type == FileChangeType::Added && event.path.rfind(moved, 0) == 0;
+    });
+    EXPECT_LT(addedCount, kDirCount)
+        << "the moved-in subtree walk ran to completion instead of honoring stopToken";
+}
+
 TEST(InotifyWatcher, StopTokenCausesPromptReturn) {
     TempDir tempDir;
     ASSERT_FALSE(tempDir.Path().empty());

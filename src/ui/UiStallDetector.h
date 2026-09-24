@@ -23,8 +23,9 @@ class UiStallDetector : public QObject {
 public:
     using Reporter = std::function<void(std::chrono::milliseconds duration, bool ongoing)>;
 
-    UiStallDetector(std::chrono::milliseconds threshold, Reporter report,
-                    QObject* parent = nullptr);
+    // ongoingAfter is parameterized for tests (5 s in production).
+    UiStallDetector(std::chrono::milliseconds threshold, Reporter report, QObject* parent = nullptr,
+                    std::chrono::milliseconds ongoingAfter = std::chrono::seconds(5));
     ~UiStallDetector() override;
 
     UiStallDetector(const UiStallDetector&) = delete;
@@ -34,6 +35,7 @@ private:
     void Run();
 
     std::chrono::milliseconds threshold_;
+    std::chrono::milliseconds ongoingAfter_;
     Reporter report_;
     std::mutex mutex_;
     std::condition_variable cv_;

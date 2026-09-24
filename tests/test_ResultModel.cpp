@@ -1,3 +1,4 @@
+#include <QColor>
 #include <QSignalSpy>
 #include <QTest>
 
@@ -42,6 +43,12 @@ private slots:
     void flags_rowsAreDragEnabledSelectableEnabled();
     void flags_rowsAreNotEditable();
     void flags_invalidIndexHasNoFlags();
+    void fullPath_joinsParentDirAndName();
+    void fullPath_rootParentDoesNotDoubleTheSlash();
+    void pendingRow_dataReturnsGrayForegroundAndTooltip();
+    void pendingRow_nonPendingRowsAreUnaffected();
+    void pendingRow_clearingPendingPathsRestoresNormalDisplay();
+    void pendingRow_survivesSetEntries();
 };
 
 void TestResultModel::emptyModel_hasNoRowsButFourColumns() {
@@ -212,6 +219,87 @@ void TestResultModel::flags_rowsAreNotEditable() {
 void TestResultModel::flags_invalidIndexHasNoFlags() {
     ResultModel model;
     QCOMPARE(model.flags(QModelIndex()), Qt::NoItemFlags);
+}
+
+void TestResultModel::fullPath_joinsParentDirAndName() {
+    ResultModel model;
+    std::vector<DisplayEntry> entries;
+    entries.push_back(MakeEntry("a.txt", "/home/user", "10 B", "2024-01-01 00:00", 10, 1000, 0));
+    model.SetEntries(entries);
+
+    QCOMPARE(QString::fromStdString(model.FullPath(0)), QString("/home/user/a.txt"));
+}
+
+void TestResultModel::fullPath_rootParentDoesNotDoubleTheSlash() {
+    ResultModel model;
+    std::vector<DisplayEntry> entries;
+    entries.push_back(MakeEntry("a.txt", "/", "10 B", "2024-01-01 00:00", 10, 1000, 0));
+    model.SetEntries(entries);
+
+    QCOMPARE(QString::fromStdString(model.FullPath(0)), QString("/a.txt"));
+}
+
+// A row whose full path is in the pending set (a Trash/Delete operation is
+// in flight for it, docs/adr/0014) must be shown greyed out with an
+// explanatory tooltip, so the user isn't confused when it disappears.
+void TestResultModel::pendingRow_dataReturnsGrayForegroundAndTooltip() {
+    ResultModel model;
+    std::vector<DisplayEntry> entries;
+    entries.push_back(MakeEntry("a.txt", "/home", "10 B", "2024-01-01 00:00", 10, 1000, 0));
+    model.SetEntries(entries);
+
+    model.SetPendingPaths({"/home/a.txt"});
+
+    QVERIFY(model.IsPending(0));
+    const QModelIndex idx = model.index(0, ResultModel::kName);
+    QCOMPARE(model.data(idx, Qt::ForegroundRole).value<QColor>(), QColor(Qt::gray));
+    QVERIFY(!model.data(idx, Qt::ToolTipRole).toString().isEmpty());
+}
+
+void TestResultModel::pendingRow_nonPendingRowsAreUnaffected() {
+    ResultModel model;
+    std::vector<DisplayEntry> entries;
+    entries.push_back(MakeEntry("a.txt", "/home", "10 B", "2024-01-01 00:00", 10, 1000, 0));
+    entries.push_back(MakeEntry("b.txt", "/home", "20 B", "2024-01-01 00:00", 20, 1000, 1));
+    model.SetEntries(entries);
+
+    model.SetPendingPaths({"/home/a.txt"});
+
+    QVERIFY(model.IsPending(0));
+    QVERIFY(!model.IsPending(1));
+    const QModelIndex row1 = model.index(1, ResultModel::kName);
+    QVERIFY(!model.data(row1, Qt::ForegroundRole).isValid());
+    QVERIFY(!model.data(row1, Qt::ToolTipRole).isValid());
+}
+
+void TestResultModel::pendingRow_clearingPendingPathsRestoresNormalDisplay() {
+    ResultModel model;
+    std::vector<DisplayEntry> entries;
+    entries.push_back(MakeEntry("a.txt", "/home", "10 B", "2024-01-01 00:00", 10, 1000, 0));
+    model.SetEntries(entries);
+    model.SetPendingPaths({"/home/a.txt"});
+    QVERIFY(model.IsPending(0));
+
+    model.SetPendingPaths({});
+
+    QVERIFY(!model.IsPending(0));
+    const QModelIndex idx = model.index(0, ResultModel::kName);
+    QVERIFY(!model.data(idx, Qt::ForegroundRole).isValid());
+}
+
+// A refresh mid-operation (e.g. a live-monitoring update while a file is
+// being trashed) must not lose the pending mark for a row that's still
+// present in the new snapshot.
+void TestResultModel::pendingRow_survivesSetEntries() {
+    ResultModel model;
+    std::vector<DisplayEntry> entries;
+    entries.push_back(MakeEntry("a.txt", "/home", "10 B", "2024-01-01 00:00", 10, 1000, 0));
+    model.SetEntries(entries);
+    model.SetPendingPaths({"/home/a.txt"});
+
+    model.SetEntries(entries);  // simulates a RefreshVisibleResults re-query
+
+    QVERIFY(model.IsPending(0));
 }
 
 QTEST_MAIN(TestResultModel)
